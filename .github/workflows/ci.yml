@@ -1,0 +1,72 @@
+# Lint and tests. tox is the entrypoint, so a green run here means the same
+# commands a person runs locally passed — there is no second definition of
+# "the test suite" to drift out of step.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A fresh push makes the in-flight run for that ref irrelevant.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Pinned to an exact tag on purpose: astral-sh/setup-uv publishes no
+      # moving `v10` major tag (its last was v7), so `@v10` does not resolve.
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          enable-cache: true
+
+      # Catches a pyproject.toml edit that was never locked, which would
+      # otherwise only surface as a --frozen failure inside build.sh.
+      - name: Check uv.lock is in sync with pyproject.toml
+        run: uv lock --check
+
+      - run: uv run tox -e lint
+
+  test:
+    name: test (${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - python: "3.12"
+            toxenv: py312
+          - python: "3.13"
+            toxenv: py313
+          - python: "3.14"
+            toxenv: py314
+    steps:
+      - uses: actions/checkout@v7
+
+      # Exact tag: see the note in the lint job.
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          enable-cache: true
+          python-version: ${{ matrix.python }}
+
+      # The wordnet corpus and the 18 MB index built from it. Without this
+      # every job spends ~25s downloading and rebuilding before the first
+      # assertion. A stale restore is self-correcting: vocab.load() checks
+      # CACHE_VERSION and rebuilds on a mismatch.
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/nltk_data
+            .vocab-cache.pkl
+          key: vocab-${{ runner.os }}-${{ hashFiles('vocab.py', 'solver.py', 'uv.lock') }}
+
+      - run: uv run tox -e ${{ matrix.toxenv }}
