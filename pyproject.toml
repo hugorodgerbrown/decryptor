@@ -13,10 +13,19 @@ dependencies = [
 ]
 
 [dependency-groups]
-# What build.sh needs to regenerate .vocab-cache.pkl and dist/.
+# Split fine-grained so each tox environment — and each CI job — installs only
+# what it runs. `dev` is the union a person wants in their editor's venv.
+# What build.sh needs to regenerate .vocab-cache.pkl and dist/. Tests need it
+# too: a cold checkout has no cache, so vocab.load() rebuilds from wordnet.
 build = [
     "wordfreq>=3.1.1",
     "nltk>=3.10.3",
+]
+test = [
+    "pytest>=9.1.1",
+]
+lint = [
+    "ruff>=0.16.5",
 ]
 # Only `build_dist.py --icons` needs Pillow; rebuilding the page is stdlib-only.
 icons = [
@@ -26,14 +35,15 @@ icons = [
 verify = [
     "playwright>=1.58.0",
 ]
+# The default group: enough to run tox and to get sensible editor integration.
+# verify and icons stay out — both are heavy and rarely used, and tox pulls
+# neither. `uv sync --all-groups` still gets everything.
 dev = [
-    "pytest>=9.1.1",
-    "ruff>=0.16.5",
     "tox>=4.60.1",
     "tox-uv>=1.36",
     {include-group = "build"},
-    {include-group = "verify"},
-    {include-group = "icons"},
+    {include-group = "test"},
+    {include-group = "lint"},
 ]
 
 [tool.uv]

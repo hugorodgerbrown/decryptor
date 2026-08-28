@@ -226,6 +226,11 @@ uv run tox -e py314       # tests only, one interpreter
 uv run tox -e py314 -- -k pattern   # arguments after -- reach pytest
 ```
 
+CI runs exactly these two tox commands on every push and pull request — lint
+once, tests on all three interpreters — so a green badge means the same
+commands you run locally passed. There is no second definition of the suite in
+the workflow file to drift out of step.
+
 The rest of the checks are run directly. The `node` ones need no Python
 environment; the `uv run` ones use `.venv`.
 
