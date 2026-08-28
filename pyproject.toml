@@ -1,0 +1,54 @@
+[project]
+name = "decryptor"
+version = "0.1.0"
+description = "Cryptic-crossword anagram and pattern solver: a CLI, a Django service, and an offline single-file build."
+requires-python = ">=3.12"
+
+# Runtime only. wordfreq and nltk are build-time dependencies — they produce
+# .vocab-cache.pkl and are not imported when serving.
+dependencies = [
+    "django>=6.1",
+    "numpy>=2.5.2",
+    "gunicorn>=26.2.0",
+]
+
+[dependency-groups]
+# What build.sh needs to regenerate .vocab-cache.pkl and dist/.
+build = [
+    "wordfreq>=3.1.1",
+    "nltk>=3.10.3",
+]
+# Only `build_dist.py --icons` needs Pillow; rebuilding the page is stdlib-only.
+icons = [
+    "pillow>=11.4.0",
+]
+# verify_pwa.py drives real Chromium; it is not needed to test, lint or build.
+verify = [
+    "playwright>=1.58.0",
+]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.16.5",
+    "tox>=4.60.1",
+    "tox-uv>=1.36",
+    {include-group = "build"},
+    {include-group = "verify"},
+    {include-group = "icons"},
+]
+
+[tool.uv]
+# Flat module layout (solver.py, vocab.py, web.py at the root) — there is
+# nothing to install, only an environment to populate.
+package = false
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+# Deliberately narrow: pyflakes plus pycodestyle errors and warnings. The
+# codebase predates any linter, so this catches real defects (unused imports,
+# undefined names) without demanding a whole-repo reformat.
+select = ["E", "F", "W"]
+
+[tool.pytest.ini_options]
+testpaths = ["test_solver.py"]

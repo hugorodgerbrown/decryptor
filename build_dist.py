@@ -3,7 +3,8 @@
 
     python3 build_dist.py           rebuild the page (stdlib only, works
                                     from a fresh clone)
-    python3 build_dist.py --icons   also regenerate the icons (needs Pillow)
+    python3 build_dist.py --icons   also regenerate the icons
+                                    (needs Pillow: uv sync --group icons)
 
 
     index.html            the app, dictionary embedded

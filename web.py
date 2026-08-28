@@ -11,7 +11,6 @@ the browser build only approximates.
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
@@ -40,7 +39,7 @@ django.setup()
 # construction, so no locking is needed.
 import vocab  # noqa: E402
 from solver import (  # noqa: E402
-    BAND_LABEL, diagnose, find_pattern, parse_pattern, solve, split_entry)
+    diagnose, find_pattern, parse_pattern, solve, split_entry)
 
 INDEX = vocab.load()
 PAGE = (HERE / "ui.template.html").read_text().replace("__PAYLOAD__", "")
