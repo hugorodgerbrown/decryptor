@@ -15,17 +15,17 @@ const puppeteer = require('/home/claude/.npm-global/lib/node_modules/'
                         + '@mermaid-js/mermaid-cli/node_modules/puppeteer');
 
 const PORT = 8137;
-const STAGE = path.join(require('os').tmpdir(), 'anagrind-deploy');
+const STAGE = path.join(require('os').tmpdir(), 'decryptor-deploy');
 const wait = ms => new Promise(r => setTimeout(r, ms));
 
 function redeploy(){
   // Exactly what build_dist.py does: change the page, restamp the cache name.
   const page = path.join(STAGE, 'index.html');
   fs.writeFileSync(page, fs.readFileSync(page, 'utf8')
-    .replace('<div class="mark">anagrind</div>', '<div class="mark">anagrind v2</div>'));
+    .replace('<div class="mark">Decryptor</div>', '<div class="mark">Decryptor v2</div>'));
   const hash = crypto.createHash('sha256').update(fs.readFileSync(page)).digest('hex').slice(0, 12);
   const sw = path.join(STAGE, 'sw.js');
-  fs.writeFileSync(sw, fs.readFileSync(sw, 'utf8').replace(/anagrind-[a-f0-9]+/g, 'anagrind-' + hash));
+  fs.writeFileSync(sw, fs.readFileSync(sw, 'utf8').replace(/decryptor-[a-f0-9]+/g, 'decryptor-' + hash));
   return hash;
 }
 
@@ -72,8 +72,8 @@ function redeploy(){
     await page.reload({waitUntil: 'load'});
     for (let i = 0; i < 25; i++) {
       const done = await page.evaluate(async h =>
-        (await caches.keys()).includes('anagrind-' + h)
-        && document.querySelector('.mark').textContent === 'anagrind v2', hash).catch(() => false);
+        (await caches.keys()).includes('decryptor-' + h)
+        && document.querySelector('.mark').textContent === 'Decryptor v2', hash).catch(() => false);
       if (done) break;
       await wait(400);
     }
@@ -82,12 +82,12 @@ function redeploy(){
     const cachesAfter = await page.evaluate(async () => await caches.keys());
 
     results.push(
-      ['manifest is installable', manifest.name === 'anagrind' && manifest.display === 'standalone'],
+      ['manifest is installable', manifest.name === 'Decryptor' && manifest.display === 'standalone'],
       ['apple-touch-icon served', iconStatus === 200],
       [`assets precached (${precached})`, precached >= 6],
-      ['first load serves the current build', first === 'anagrind'],
+      ['first load serves the current build', first === 'Decryptor'],
       ['WORKS OFFLINE once installed', offline],
-      ['a redeploy reaches an installed user', updated === 'anagrind v2'],
+      ['a redeploy reaches an installed user', updated === 'Decryptor v2'],
       ['the superseded cache is deleted',
         cachesAfter.length === 1 && cachesAfter[0] !== cacheV1],
     );

@@ -76,10 +76,10 @@ def redeploy(root: Path) -> str:
     """Exactly what build_dist.py does: change the page, restamp the cache."""
     page = root / "index.html"
     page.write_text(page.read_text().replace(
-        '<div class="mark">anagrind</div>', '<div class="mark">anagrind v2</div>'))
+        '<div class="mark">Decryptor</div>', '<div class="mark">Decryptor v2</div>'))
     build = hashlib.sha256(page.read_bytes()).hexdigest()[:12]
     sw = root / "sw.js"
-    sw.write_text(re.sub(r"anagrind-[a-f0-9]+", "anagrind-" + build, sw.read_text()))
+    sw.write_text(re.sub(r"decryptor-[a-f0-9]+", "decryptor-" + build, sw.read_text()))
     return build
 
 
@@ -88,7 +88,7 @@ def main() -> int:
     if not (src / "index.html").exists():
         raise SystemExit(f"no built page at {src} — run python3 build_dist.py")
 
-    stage = Path(tempfile.mkdtemp(prefix="anagrind-deploy-"))
+    stage = Path(tempfile.mkdtemp(prefix="decryptor-deploy-"))
     shutil.copytree(src, stage, dirs_exist_ok=True)
     origin = Origin(stage)
     origin.up()
@@ -154,8 +154,8 @@ def main() -> int:
         for _ in range(30):
             try:
                 if page.evaluate(
-                        """async b => (await caches.keys()).includes('anagrind-' + b)
-                           && document.querySelector('.mark').textContent === 'anagrind v2'""",
+                        """async b => (await caches.keys()).includes('decryptor-' + b)
+                           && document.querySelector('.mark').textContent === 'Decryptor v2'""",
                         build):
                     break
             except Exception:
@@ -173,18 +173,18 @@ def main() -> int:
     checks = [
         ("offline really means offline (control)", control == "unreachable"),
         ("manifest is installable",
-            manifest.get("name") == "anagrind"
+            manifest.get("name") == "Decryptor"
             and manifest.get("display") == "standalone"
             and {"192x192", "512x512"} <= icon_sizes),
         ("apple-touch-icon served", touch_icon == 200),
         (f"every asset precached ({len(precached)}) {precached}", len(precached) >= 7),
         ("no external requests", not external),
-        ("first load serves the current build", first == "anagrind"),
+        ("first load serves the current build", first == "Decryptor"),
         ("WORKS OFFLINE once installed", offline),
         (f"every asset answerable offline {reachable}",
             all(status == 200 for status in reachable.values())),
         ("an unknown URL offline still opens the app", fallback),
-        ("a redeploy reaches an installed user", updated == "anagrind v2"),
+        ("a redeploy reaches an installed user", updated == "Decryptor v2"),
         ("the superseded cache is deleted",
             len(cache_after) == 1 and cache_after[0] != cache_before),
     ]

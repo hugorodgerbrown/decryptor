@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""anagrind CLI.
+"""Decryptor CLI.
 
     ./solve.py "on a train, up to its" "10,5"
     ./solve.py "the eyes" "4,3" --all

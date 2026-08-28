@@ -2,7 +2,7 @@
 .vocab-cache.pkl
 payload.b64
 payload.gz
-anagrind.html
+decryptor.html
 
 # dist/ IS committed. Render publishes it directly with no build step, so the
 # deploy cannot break on a build image that lacks Python or on a slow install.

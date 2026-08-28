@@ -1,4 +1,4 @@
-# anagrind
+# Decryptor
 
 Crossword anagram solver. Give it the fodder and the enumeration, get real answers.
 
@@ -154,7 +154,7 @@ switching tabs cannot bleed one into the other.
 
 ## Two ways to run it
 
-**Standalone** — `anagrind.html`, one file, 2.2 MB. Open it on a phone or a
+**Standalone** — `decryptor.html`, one file, 2.2 MB. Open it on a phone or a
 laptop; the dictionary is gzipped and embedded, so it needs no install and no
 server. The combinatorial tier is capped at 400 results here.
 
@@ -219,7 +219,7 @@ python3 verify_pwa.py     # the same two claims, against a server that is actual
 python3 devserver.py      # serve dist/ locally with production headers
 
 python3 build_payload.py  # regenerate payload.b64 after changing vocab.py
-python3 -c "open('anagrind.html','w').write(open('ui.template.html').read().replace('__PAYLOAD__', open('payload.b64').read().strip()))"
+python3 -c "open('decryptor.html','w').write(open('ui.template.html').read().replace('__PAYLOAD__', open('payload.b64').read().strip()))"
 ```
 
 ## Design
