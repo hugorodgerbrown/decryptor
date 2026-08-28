@@ -12,7 +12,8 @@ words into anagram keys costs 714 ms of a 2.6 s startup, and a query touches
 one word length and one phrase total — so grouped, that work happens on demand
 in ~65 ms instead of up front on the main thread.
 """
-import base64, gzip
+import base64
+import gzip
 from collections import defaultdict
 
 import vocab

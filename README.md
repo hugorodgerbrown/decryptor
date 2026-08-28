@@ -79,8 +79,8 @@ If the control ever passes, nothing below it means anything.
 
 That is how `icon-180.png` was caught. The page requests it on every load as
 its apple-touch-icon, it was the only asset the worker did not precache, and
-`precached >= 6` was true the whole time. It needs `pip install playwright &&
-playwright install chromium`.
+`precached >= 6` was true the whole time. It needs `uv sync --group verify &&
+uv run playwright install chromium`.
 
 The worker is cache-first, which means a stale cache would serve the old app
 forever. Its cache name carries a hash of the built page, so a deploy that
@@ -187,7 +187,7 @@ in the load path that touches the network. It follows the OS light/dark setting.
 One caveat: `DecompressionStream` needs Safari 16.4+, Chrome 80+ or Firefox
 113+. Older browsers get a named explanation instead of a spinner.
 
-**Django service** — `python3 web.py` → http://127.0.0.1:8000. Same UI
+**Django service** — `uv run python web.py` → http://127.0.0.1:8000. Same UI
 template, served with no payload embedded, so the page calls `/api/solve` and
 answers come from `solver.py` itself.
 
@@ -205,21 +205,40 @@ checks all 15 Python expectations still hold, so the two cannot drift silently.
 
 ## Setup
 
+Dependencies are managed with [uv](https://docs.astral.sh/uv/); `uv.lock` pins
+the exact set. There is no package to install — the modules sit at the repo
+root — so `uv sync` only populates `.venv`.
+
 ```bash
-pip install wordfreq nltk numpy
-python3 -c "import nltk; nltk.download('wordnet')"
-python3 vocab.py          # builds .vocab-cache.pkl, ~32s, 9.0 MB
-python3 build_dist.py     # assembles dist/ for hosting
-python3 -m pytest         # 32 passing
+uv sync --all-groups      # runtime + build + test + verify deps, from uv.lock
+uv run python -c "import nltk; nltk.download('wordnet')"
+uv run python vocab.py    # builds .vocab-cache.pkl, ~32s, 9.0 MB
+uv run python build_dist.py  # assembles dist/ for hosting
+```
+
+Tests and linting go through tox, which builds its environments from the same
+lockfile:
+
+```bash
+uv run tox                # lint + tests on 3.12, 3.13 and 3.14
+uv run tox -e lint        # ruff only
+uv run tox -e py314       # tests only, one interpreter
+uv run tox -e py314 -- -k pattern   # arguments after -- reach pytest
+```
+
+The rest of the checks are run directly. The `node` ones need no Python
+environment; the `uv run` ones use `.venv`.
+
+```bash
 node verify_ui.js         # 15 browser/Python parity checks
 node verify_load.js       # the real loadDictionary(), end to end
 node verify_browser.js    # headless Chromium, bare and under CSP
 node verify_deploy.js     # serves dist/: offline install, and redeploy reaching a user
-python3 verify_pwa.py     # the same two claims, against a server that is actually dead
-python3 devserver.py      # serve dist/ locally with production headers
+uv run python verify_pwa.py  # the same two claims, against a server that is actually dead
+uv run python devserver.py   # serve dist/ locally with production headers
 
-python3 build_payload.py  # regenerate payload.b64 after changing vocab.py
-python3 -c "open('decryptor.html','w').write(open('ui.template.html').read().replace('__PAYLOAD__', open('payload.b64').read().strip()))"
+uv run python build_payload.py  # regenerate payload.b64 after changing vocab.py
+uv run python -c "open('decryptor.html','w').write(open('ui.template.html').read().replace('__PAYLOAD__', open('payload.b64').read().strip()))"
 ```
 
 ## Design

@@ -3,8 +3,8 @@
 production: it works with no signal once installed, and a redeploy reaches a
 user who already installed it.
 
-    pip install playwright && playwright install chromium
-    python3 verify_pwa.py
+    uv sync --group verify && uv run playwright install chromium
+    uv run python verify_pwa.py
 
 **Offline means the server is dead, not emulated.** The first version of this
 harness used the browser's offline emulation, and it silently failed to apply:

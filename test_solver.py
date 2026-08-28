@@ -7,7 +7,6 @@ from solver import (
     BAND_RANKED,
     BAND_UNATTESTED,
     BAND_UNRANKED,
-    TIER_COMBO,
     TIER_PHRASE,
     anagram_key,
     normalise,
@@ -138,7 +137,7 @@ def test_limit_is_respected(index):
 
 
 # -- word finder ------------------------------------------------------------
-from solver import Pattern, find_pattern, parse_pattern  # noqa: E402
+from solver import find_pattern, parse_pattern  # noqa: E402
 
 
 def test_blank_is_space_underscore_or_question_mark():
