@@ -77,8 +77,8 @@ def read_payload() -> str:
 
 
 MANIFEST = """{
-  "name": "anagrind",
-  "short_name": "anagrind",
+  "name": "Decryptor",
+  "short_name": "Decryptor",
   "lang": "en",
   "id": "./",
   "description": "Crossword anagram solver. Fodder in, real answers out.",
@@ -102,7 +102,7 @@ MANIFEST = """{
 #
 # CACHE carries a hash of the built page. Without it a cache-first worker serves
 # the old app forever, because it never asks the network what changed.
-SERVICE_WORKER = """const CACHE = "anagrind-__BUILD__";
+SERVICE_WORKER = """const CACHE = "decryptor-__BUILD__";
 const ASSETS = ["./", "./index.html", "./manifest.webmanifest",
                 "./icon-180.png", "./icon-192.png", "./icon-512.png",
                 "./icon-maskable.png"];

@@ -1,6 +1,6 @@
 {
-  "name": "anagrind",
-  "short_name": "anagrind",
+  "name": "Decryptor",
+  "short_name": "Decryptor",
   "lang": "en",
   "id": "./",
   "description": "Crossword anagram solver. Fodder in, real answers out.",

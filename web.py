@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""anagrind as a Django service. One file, no project scaffolding.
+"""Decryptor as a Django service. One file, no project scaffolding.
 
     python3 web.py            # http://127.0.0.1:8000
 
@@ -29,7 +29,7 @@ DEBUG = os.environ.get("DJANGO_DEBUG", "1") == "1"
 
 settings.configure(
     DEBUG=DEBUG,
-    SECRET_KEY=os.environ.get("DJANGO_SECRET_KEY", "anagrind-dev-only"),
+    SECRET_KEY=os.environ.get("DJANGO_SECRET_KEY", "decryptor-dev-only"),
     ALLOWED_HOSTS=os.environ.get("ALLOWED_HOSTS", "*").split(","),
     ROOT_URLCONF=__name__,
     MIDDLEWARE=["django.middleware.common.CommonMiddleware"],

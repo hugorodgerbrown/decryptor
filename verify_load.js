@@ -5,7 +5,7 @@
 // broke the page while every other check stayed green: the parity harness
 // hand-rolls its own payload parsing and never calls the loader.
 const fs = require('fs');
-const html = fs.readFileSync('anagrind.html', 'utf8');
+const html = fs.readFileSync('decryptor.html', 'utf8');
 let js = html.split('<script>')[1].split('</script>')[0];
 js = js.slice(0, js.indexOf(' * Tile tray'));
 js = js.slice(0, js.lastIndexOf('/*')).replace('"use strict";', '');

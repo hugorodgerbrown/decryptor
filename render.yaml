@@ -5,7 +5,7 @@
 # `python3 build_dist.py` and commit the result.
 services:
   - type: web
-    name: anagrind
+    name: decryptor
     runtime: static
     buildCommand: ""
     staticPublishPath: ./dist

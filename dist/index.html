@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>anagrind</title>
+<title>Decryptor</title>
 <meta name="description" content="Crossword anagram solver. Fodder in, real answers out.">
 <!-- Installable to the home screen. These are inert when the file is opened
      directly, and the service worker only registers over http(s). -->
@@ -11,7 +11,7 @@
 <link rel="apple-touch-icon" href="icon-180.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="anagrind">
+<meta name="apple-mobile-web-app-title" content="Decryptor">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#fbfbfa" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#16171a" media="(prefers-color-scheme: dark)">
@@ -154,7 +154,7 @@ input:focus{border-color:var(--ranked)}
 <body>
 <div class="wrap">
   <header>
-    <div class="mark">anagrind</div>
+    <div class="mark">Decryptor</div>
     <div class="count" id="count">&mdash;</div>
   </header>
 
@@ -1210,11 +1210,11 @@ function fatal(heading, detail){
       // "Loading dictionary..." forever, so an old browser and a slow one
       // looked identical.
       if (err instanceof UnsupportedBrowser) {
-        fatal("This browser is too old to run anagrind",
+        fatal("This browser is too old to run Decryptor",
               `The dictionary is gzipped in the page, which ${err.message}. `
               + "Updating the browser, or opening the file in a different one, will fix it.");
       } else {
-        console.error("anagrind: dictionary load failed", err);
+        console.error("decryptor: dictionary load failed", err);
         fatal("The dictionary did not load",
               `${err && err.name || "Error"}: ${err && err.message || err}`
               + " \u2014 the full error is in the browser console.");
@@ -1227,8 +1227,7 @@ function fatal(heading, detail){
   ready = true;
   metaEl.textContent = source + "\n"
     + "UKACD \u00a9 2009 J Ross Beresford, BSD-3-Clause \u00b7 WordNet \u00b7 wordfreq";
-  fodderEl.value = "on a train, up to its";
-  enumEl.value = "10,5";
+  // The fields start empty; the placeholders carry the worked example.
   refresh();
 
   // Only when hosted. Opened as a local file there is nothing to cache and

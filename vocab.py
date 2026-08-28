@@ -1,4 +1,4 @@
-"""Vocabulary sources for anagrind.
+"""Vocabulary sources for Decryptor.
 
 Two jobs, deliberately separated:
 

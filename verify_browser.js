@@ -30,12 +30,32 @@ async function check(browser, file, label){
   await page.goto('file://' + file, {waitUntil: 'load'});
   let state;
   try {
+    // The fields start empty, so nothing solves until something is typed.
+    // Wait for the dictionary first — the meta line is what says it is ready.
     state = await page.waitForFunction(() => {
       const fatal = document.querySelector('.fatal');
       if (fatal) return {fatal: fatal.textContent.trim().slice(0, 120)};
-      const first = document.querySelector('.answer .txt');
-      return first ? {answer: first.textContent} : false;
+      return document.getElementById('meta').textContent ? {ready: true} : false;
     }, {timeout: 30000}).then(h => h.jsonValue());
+
+    if (state.ready) {
+      // Fodder first: the enumeration follows its letter count until typed
+      // over, so filling it second is what makes the shape stick.
+      await page.evaluate(() => {
+        const fire = (el, v) => {
+          el.value = v;
+          el.dispatchEvent(new Event('input', {bubbles: true}));
+        };
+        fire(document.getElementById('fodder'), 'on a train, up to its');
+        fire(document.getElementById('enum'), '10,5');
+      });
+      state = await page.waitForFunction(() => {
+        const fatal = document.querySelector('.fatal');
+        if (fatal) return {fatal: fatal.textContent.trim().slice(0, 120)};
+        const first = document.querySelector('.answer .txt');
+        return first ? {answer: first.textContent} : false;
+      }, {timeout: 30000}).then(h => h.jsonValue());
+    }
   } catch { state = {timeout: true}; }
   const ms = Date.now() - t0;
   const tiles = await page.$$eval('.tile', els => els.length).catch(() => 0);
@@ -43,7 +63,7 @@ async function check(browser, file, label){
   const checks = [
     ['no JS errors', errors.length === 0],
     ['dictionary loads', !state.fatal && !state.timeout],
-    ['solves the default clue', state.answer === 'saturation point'],
+    ['solves the worked example', state.answer === 'saturation point'],
     ['tile tray rendered', tiles === 15],
   ];
   let fail = 0;
@@ -58,8 +78,8 @@ async function check(browser, file, label){
 }
 
 (async () => {
-  const source = path.resolve(process.argv[2] || 'anagrind.html');
-  const sandboxed = path.join(os.tmpdir(), 'anagrind-csp.html');
+  const source = path.resolve(process.argv[2] || 'decryptor.html');
+  const sandboxed = path.join(os.tmpdir(), 'decryptor-csp.html');
   fs.writeFileSync(sandboxed,
     fs.readFileSync(source, 'utf8').replace('<meta charset="utf-8">', '<meta charset="utf-8">' + CSP));
 

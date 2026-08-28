@@ -1,7 +1,7 @@
 // Runs the browser solver's logic in Node against the real payload and
 // checks it agrees with the Python suite.
 const fs = require('fs'), zlib = require('zlib');
-const html = fs.readFileSync('anagrind.html', 'utf8');
+const html = fs.readFileSync('decryptor.html', 'utf8');
 let js = html.split('<script>')[1].split('</script>')[0];
 js = js.slice(0, js.indexOf(' * Tile tray'));
 js = js.slice(0, js.lastIndexOf('/*'));

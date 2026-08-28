@@ -1,4 +1,4 @@
-"""anagrind — crossword anagram solver.
+"""Decryptor — crossword anagram solver.
 
 Core search. Pure functions + an in-memory index. No I/O, no framework.
 
