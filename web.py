@@ -39,7 +39,8 @@ django.setup()
 # construction, so no locking is needed.
 import vocab  # noqa: E402
 from solver import (  # noqa: E402
-    diagnose, find_pattern, find_synonyms, parse_pattern, solve, split_entry)
+    ABBREV_LABEL, diagnose, find_abbreviations, find_pattern, find_synonyms,
+    parse_pattern, solve, split_entry, what_it_stands_for)
 
 INDEX = vocab.load()
 PAGE = (HERE / "ui.template.html").read_text().replace("__PAYLOAD__", "")
@@ -117,6 +118,36 @@ def api_synonyms(request):
     }, json_dumps_params={"ensure_ascii": False})
 
 
+def api_abbreviations(request):
+    """What a setter may write a clue word as. 'sailor' -> ab, jack, os, tar.
+
+    Bands carry the convention's standing, not a frequency, so `band_label`
+    reads differently here — and `score` is absent rather than zero, because
+    there is no number that belongs in it.
+
+    `meanings` answers the dead end: a word with no shorthand may itself be a
+    short form, and saying what it stands for is more use than an empty list.
+    """
+    try:
+        limit = min(int(request.GET.get("limit", 50)), 200)
+    except ValueError:
+        return JsonResponse({"error": "limit must be a number"}, status=400)
+    word = request.GET.get("word", "")
+    pattern = parse_pattern(request.GET.get("pattern", ""))
+    answers = find_abbreviations(word, pattern if pattern.words else None,
+                                 INDEX, limit=limit)
+    return JsonResponse({
+        "answers": [
+            {"text": a.text, "parts": list(a.words),
+             "seps": list(split_entry(a.text)[1]),
+             "band": a.band, "band_label": ABBREV_LABEL[a.band],
+             "tier": a.tier}
+            for a in answers
+        ],
+        "meanings": [] if answers else what_it_stands_for(word, INDEX),
+    }, json_dumps_params={"ensure_ascii": False})
+
+
 def api_diagnose(request):
     """What would have worked. Only meaningful when /api/solve came back empty."""
     try:
@@ -139,6 +170,7 @@ def api_diagnose(request):
 urlpatterns = [path("", home), path("api/solve", api_solve),
                path("api/find", api_find),
                path("api/synonyms", api_synonyms),
+               path("api/abbreviations", api_abbreviations),
                path("api/diagnose", api_diagnose)]
 
 # gunicorn web:application

@@ -22,10 +22,12 @@ from __future__ import annotations
 import pickle
 from pathlib import Path
 
-from solver import Index, normalise, split_entry
+from solver import (BAND_RANKED, BAND_UNATTESTED, BAND_UNRANKED, Index,
+                    lookup_key, normalise, split_entry)
 
 HERE = Path(__file__).parent
 UKACD = HERE / "data" / "UKACD.txt"
+ABBREVIATIONS = HERE / "data" / "abbreviations.txt"
 CACHE = HERE / ".vocab-cache.pkl"
 CACHE_VERSION = 2
 
@@ -122,6 +124,43 @@ def _synonym_map(freq: dict[str, float]) -> dict[str, frozenset[str]]:
     return out
 
 
+# The source marks entries two ways, and both are evidence about how safe the
+# convention is, so neither is flattened away.
+ABBREV_BAND = {"": BAND_RANKED, "*": BAND_UNRANKED, "+": BAND_UNATTESTED}
+
+
+def load_abbreviations() -> tuple[dict[str, tuple], dict[str, tuple]]:
+    """meaning -> ((short, band), ...), and its inverse.
+
+    Deliberately not in the cache. It is 42 KB and parses in a millisecond, so
+    pickling it would buy nothing and would mean a 30-second vocabulary rebuild
+    every time someone corrects one line of the list.
+    """
+    forward: dict[str, list] = {}
+    reverse: dict[str, list] = {}
+    if not ABBREVIATIONS.exists():
+        return {}, {}
+
+    for line in ABBREVIATIONS.open(encoding="utf-8"):
+        line = line.strip()
+        if not line or line.startswith("#") or ": " not in line:
+            continue
+        short, meaning = line.split(": ", 1)
+        mark = meaning[-1] if meaning.endswith(("*", "+")) else ""
+        meaning = meaning[: -1].strip() if mark else meaning
+        key, short = lookup_key(meaning), short.strip()
+        if not key or not short:
+            continue
+        entry = (short, ABBREV_BAND[mark])
+        if entry not in forward.setdefault(key, []):
+            forward[key].append(entry)
+        if meaning not in reverse.setdefault(lookup_key(short), []):
+            reverse[lookup_key(short)].append(meaning)
+
+    return ({k: tuple(sorted(v)) for k, v in forward.items()},
+            {k: tuple(sorted(v)) for k, v in reverse.items()})
+
+
 def load(rebuild: bool = False) -> Index:
     cached = None
     if CACHE.exists() and not rebuild:
@@ -139,11 +178,15 @@ def load(rebuild: bool = False) -> Index:
     else:
         tables, synonyms = cached
 
+    abbreviations, meanings = load_abbreviations()
+
     return Index.from_tables(
         tables,
         rankable_zipf=RANKABLE_ZIPF,
         combo_min_zipf=COMBO_MIN_ZIPF,
         synonyms=lambda word: synonyms.get(word, frozenset()),
+        abbreviations=lambda key: abbreviations.get(key, ()),
+        meanings=lambda key: meanings.get(key, ()),
     )
 
 
@@ -157,4 +200,5 @@ if __name__ == "__main__":
     rankable = sum(1 for z in idx.freq.values() if z >= RANKABLE_ZIPF)
     print(f"{n_words:,} words ({rankable:,} rankable)  |  {n_phrases:,} phrases")
     print(f"{sum(1 for w in idx.freq if idx.synonyms(w)):,} words with synonyms")
+    print(f"{len(load_abbreviations()[0]):,} clue words with a setter's shorthand")
     print(f"built in {time.perf_counter() - started:.1f}s")

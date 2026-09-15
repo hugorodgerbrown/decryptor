@@ -10,7 +10,7 @@ js = js.replace(/const PAYLOAD = "[^"]*";/, '').replace('"use strict";', '');
 const test = `
 const blob0 = ZLIB.gunzipSync(
   Buffer.from(FS.readFileSync('payload.b64', 'utf8').trim(), 'base64')).toString();
-const [wordBlob, freqBlob, phraseBlob, synBlob] = blob0.split('\\x1e');
+const [wordBlob, freqBlob, phraseBlob, synBlob, abbrevBlob] = blob0.split('\\x1e');
 const A = "0123456789abcdefghijklmnopqrstuvwxyz";
 const freqGroups = freqBlob.split('\\x1d');
 let nWords = 0;
@@ -30,6 +30,7 @@ for (const line of (synBlob || '').split('\\n')) {
   const [w, ...rest] = line.split(' ');
   SYN.set(w, new Set(rest));
 }
+loadAbbreviations(abbrevBlob);
 console.log(\`loaded \${nWords.toLocaleString()} words in \${WORD_GROUPS.size} groups, \${PHRASE_GROUPS.size} phrase groups\`);
 
 const cases = [
@@ -95,6 +96,39 @@ if (!synOrdered) fail++;
 const capped = findSynonyms('run', null, 3);
 console.log(\`\${capped.length === 3 ? 'PASS' : 'FAIL'}  synonym limit respected\`);
 if (capped.length !== 3) fail++;
+// abbreviations parity — the same expectations test_solver.py holds
+const abbrCases = [
+  ['sailor', null, a => JSON.stringify(a) === '["ab","jack","os","tar"]',
+   'sailor -> ab, jack, os, tar'],
+  ['sailor', '__', a => JSON.stringify(a) === '["ab","os"]', 'sailor + __ -> ab, os'],
+  ['Sailor!', null, a => JSON.stringify(a) === '["ab","jack","os","tar"]',
+   'lookup ignores case and punctuation'],
+  ['archbishop', null, a => a.includes('cantuar'),
+   'shorthand is not filtered by the dictionary'],
+  ['uncle', null, a => a.includes('pawnbroker'), 'multi-word shorthand survives'],
+  ['uncle', '___,___', a => a.length === 0, 'pattern carries its enumeration'],
+  ['ab', null, a => a.length === 0, 'a short form is not a clue word'],
+  ['zzzzqx', null, a => a.length === 0, 'unknown word has no shorthand'],
+  ['', null, a => a.length === 0, 'no word finds nothing'],
+];
+for (const [word, pat, ok, label] of abbrCases) {
+  const texts = findAbbreviations(word, pat).map(a => a.text);
+  const pass = ok(texts);
+  if (!pass) fail++;
+  console.log(\`\${pass ? 'PASS' : 'FAIL'}  \${label}\${pass ? '' : '  got ' + JSON.stringify(texts.slice(0, 6))}\`);
+}
+const notes = findAbbreviations('note', null);
+const byBand = Object.fromEntries(notes.map(a => [a.text, a.band]));
+const marks = byBand['do'] === 0 && byBand['a'] === 2;
+console.log(\`\${marks ? 'PASS' : 'FAIL'}  source markers survive as bands\`);
+const abbrOrdered = JSON.stringify(notes.map(a => a.band))
+  === JSON.stringify(notes.map(a => a.band).sort((x, y) => x - y));
+console.log(\`\${abbrOrdered ? 'PASS' : 'FAIL'}  shorthand bands monotonic\`);
+const unscored = notes.every(a => a.score === 0);
+console.log(\`\${unscored ? 'PASS' : 'FAIL'}  shorthand is not scored\`);
+const stands = whatItStandsFor('ab');
+console.log(\`\${stands.includes('sailor') ? 'PASS' : 'FAIL'}  a short form says what it stands for\`);
+if (!marks || !abbrOrdered || !unscored || !stands.includes('sailor')) fail++;
 PROC.exit(fail ? 1 : 0);
 `;
 eval(js + test.replace(/ZLIB/g, 'require("zlib")').replace(/FS/g, 'require("fs")').replace(/PROC/g, 'process'));

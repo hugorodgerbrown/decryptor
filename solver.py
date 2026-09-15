@@ -201,6 +201,17 @@ def parse_pattern(text: str) -> Pattern:
     return Pattern(tuple(words), tuple(separators))
 
 
+def lookup_key(text: str) -> str:
+    """Fold a phrase to what an abbreviation table is keyed by.
+
+    normalise() would run 'able seaman' into one word, and these meanings are
+    often two — so words survive as words and everything between them goes.
+    'Anglo-Saxon' and 'anglo saxon' land on the same key, which is the point:
+    the solver types what the clue says, not what the table says."""
+    stripped = unicodedata.normalize("NFKD", text).lower()
+    return " ".join(re.findall(r"[a-z0-9]+", stripped))
+
+
 def normalise_keep_shape(text: str) -> str:
     """normalise(), but blanks and separators survive — they are the pattern."""
     stripped = unicodedata.normalize("NFKD", text).lower()
@@ -217,10 +228,21 @@ def normalise_keep_shape(text: str) -> str:
 TIER_PHRASE = "phrase"  # answer is an attested multi-word entry
 TIER_WORD = "word"      # answer is an attested single word
 TIER_COMBO = "combo"    # letters split into valid words, phrase unattested
+TIER_ABBREV = "abbrev"  # a setter's conventional substitution, not a synonym
 
 BAND_RANKED = 0      # attested, and we have frequency evidence for every word
 BAND_UNRANKED = 1    # attested, but at least one word has no frequency signal
 BAND_UNATTESTED = 2  # a legal split of the letters, nothing more
+
+# Abbreviations reuse the three bands, because they have the same shape: three
+# grades of evidence, never traded off against each other. What differs is what
+# the evidence is about — a convention's standing, not a word's frequency — so
+# the labels differ and the numbers do not.
+ABBREV_LABEL = {
+    BAND_RANKED: "standard",
+    BAND_UNRANKED: "advanced cryptics only",
+    BAND_UNATTESTED: "considered unsound by some",
+}
 
 BAND_LABEL = {
     BAND_RANKED: "ranked",
@@ -262,12 +284,20 @@ class Index:
         rankable_zipf: float = 1.0,
         combo_min_zipf: float = 2.3,
         synonyms: "Callable[[str], set[str]] | None" = None,
+        abbreviations: "Callable[[str], tuple] | None" = None,
+        meanings: "Callable[[str], tuple] | None" = None,
     ) -> None:
         self.freq = freq
         self.rankable_zipf = rankable_zipf
         self.combo_min_zipf = combo_min_zipf
         # Injected rather than imported: solver.py stays free of corpus deps.
         self.synonyms = synonyms or (lambda word: set())
+        # meaning key -> ((short form, band), ...), and its inverse. Also
+        # injected, and from a plain text file rather than the pickle: it is
+        # 42 KB, so parsing it on every load costs nothing and editing the list
+        # needs no cache rebuild.
+        self.abbreviations = abbreviations or (lambda key: ())
+        self.abbreviation_meanings = meanings or (lambda key: ())
 
         # length -> anagram key -> words
         self.words_by_key: dict[int, dict[str, list[str]]] = defaultdict(
@@ -309,6 +339,8 @@ class Index:
         rankable_zipf: float = 1.0,
         combo_min_zipf: float = 2.3,
         synonyms: "Callable[[str], set[str]] | None" = None,
+        abbreviations: "Callable[[str], tuple] | None" = None,
+        meanings: "Callable[[str], tuple] | None" = None,
     ) -> "Index":
         """Rebuild from `tables()` without redoing the work.
 
@@ -321,6 +353,8 @@ class Index:
         self.rankable_zipf = rankable_zipf
         self.combo_min_zipf = combo_min_zipf
         self.synonyms = synonyms or (lambda word: set())
+        self.abbreviations = abbreviations or (lambda key: ())
+        self.abbreviation_meanings = meanings or (lambda key: ())
         self._matrices = {}
         self._key_matrices = {}
         return self
@@ -607,6 +641,79 @@ def find_synonyms(
 
     answers.sort(key=lambda a: (a.band, -a.score, a.text))
     return answers[:limit]
+
+
+# --------------------------------------------------------------------------
+# Abbreviations
+#
+# The fourth way in, and the only one that is not a dictionary lookup at all.
+# A setter writing 'sailor' may mean the letters AB, and no thesaurus will say
+# so: it is a convention of the form, attested by the setters who use it.
+# --------------------------------------------------------------------------
+
+
+def find_abbreviations(
+    word: str,
+    pattern: str | Pattern | None,
+    index: Index,
+    limit: int = 50,
+) -> list[Answer]:
+    """What a setter may write `word` as.
+
+    Bands carry the convention's standing rather than the word's frequency —
+    standard, advanced-cryptics-only, or disputed — so the source's own two
+    markers survive into the output instead of being flattened into a list that
+    implies they are all equally safe.
+
+    Not scored. There is no frequency evidence that bears on whether AB is a
+    fair way to clue 'sailor', so the ordering inside a band is alphabetical
+    and the score stays 0. Inventing a number here is exactly what the bands
+    exist to prevent.
+    """
+    key = lookup_key(word)
+    if not key:
+        return []
+
+    pat = pattern if isinstance(pattern, Pattern) else (
+        parse_pattern(pattern) if pattern else None)
+    if pat is not None and not pat.words:
+        pat = None
+
+    answers: list[Answer] = []
+    seen: set[tuple[str, ...]] = set()
+
+    for short, band in index.abbreviations(key):
+        parts, separators = split_entry(short)
+        if not parts or parts in seen:
+            continue
+        if pat is not None and not pat.matches(parts):
+            continue
+        seen.add(parts)
+        answers.append(
+            Answer(
+                text=parts[0] + "".join(
+                    s + p for s, p in zip(separators, parts[1:])),
+                words=parts,
+                tier=TIER_ABBREV,
+                band=band,
+                score=0.0,
+            )
+        )
+
+    answers.sort(key=lambda a: (a.band, a.text))
+    return answers[:limit]
+
+
+def what_it_stands_for(short: str, index: Index, limit: int = 12) -> list[str]:
+    """The reverse: what this short form can mean.
+
+    Only used to answer the dead end. A solver who types 'ab' has typed a short
+    form rather than a clue word, and a bare "no results" would be a lie about
+    a word the table knows perfectly well. The inverse is built once at load
+    rather than scanned per query.
+    """
+    key = lookup_key(short)
+    return list(index.abbreviation_meanings(key))[:limit] if key else []
 
 
 # --------------------------------------------------------------------------
