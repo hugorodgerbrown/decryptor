@@ -218,31 +218,13 @@ from solver import find_synonyms  # noqa: E402
 
 def test_synonyms_of_a_clue_word(index):
     """The plain lookup: the definition half of the clue, nothing else known."""
-    texts = [a.text for a in find_synonyms("want", None, index)]
+    texts = [a.text for a in find_synonyms("want", index)]
     assert "need" in texts
     assert "wish" in texts
 
 
-def test_pattern_narrows_the_synset(index):
-    """The whole point of the mode: 'quiet' has a dozen synonyms and exactly one
-    of them fits h__h."""
-    assert [a.text for a in find_synonyms("quiet", "h__h", index)] == ["hush"]
-
-
-def test_pattern_carries_its_own_enumeration(index):
-    """Same rule as the word finder: the shape is in the separators, so a
-    multi-word pattern rejects a single-word synonym of the right length."""
-    assert find_synonyms("quiet", "h_,_h", index) == []
-
-
-def test_synonyms_respect_the_pattern_positionally(index):
-    """A synonym with the right letters in the wrong squares must not come
-    back, exactly as in find_pattern()."""
-    assert "hush" not in [a.text for a in find_synonyms("quiet", "_h_h", index)]
-
-
 def test_synonym_bands_match_the_solver(index):
-    answers = find_synonyms("quiet", None, index)
+    answers = find_synonyms("quiet", index)
     assert answers == sorted(answers, key=lambda a: (a.band, -a.score, a.text))
     assert answers[0].band == BAND_RANKED
 
@@ -251,31 +233,127 @@ def test_synonyms_are_all_attested(index):
     """WordNet offers lemmas our own dictionary has never heard of. We cannot
     band those honestly, and the browser payload drops them, so neither may we."""
     for word in ("quiet", "want", "sailor", "flower", "run"):
-        for answer in find_synonyms(word, None, index):
+        for answer in find_synonyms(word, index):
             assert all(index.attests(w) for w in answer.words), answer.text
 
 
 def test_a_word_is_not_its_own_synonym(index):
-    assert "quiet" not in [a.text for a in find_synonyms("quiet", None, index)]
+    assert "quiet" not in [a.text for a in find_synonyms("quiet", index)]
 
 
 def test_synonyms_ignore_case_and_punctuation(index):
-    assert find_synonyms("Quiet!", None, index) == find_synonyms("quiet", None, index)
+    assert find_synonyms("Quiet!", index) == find_synonyms("quiet", index)
 
 
-def test_no_word_finds_nothing(index):
-    assert find_synonyms("", None, index) == []
-    assert find_synonyms("   ", "h__h", index) == []
+def test_no_word_finds_no_synonyms(index):
+    assert find_synonyms("", index) == []
+    assert find_synonyms("   ", index) == []
 
 
 def test_unknown_word_finds_nothing_rather_than_raising(index):
     """Below the frequency floor there is simply no synset. An empty list is
     the honest answer; the UI says so in words."""
-    assert find_synonyms("zzzzqx", None, index) == []
+    assert find_synonyms("zzzzqx", index) == []
 
 
 def test_synonym_limit_is_respected(index):
-    assert len(find_synonyms("run", None, index, limit=3)) == 3
+    assert len(find_synonyms("run", index, limit=3)) == 3
+
+
+# -- abbreviations ----------------------------------------------------------
+from solver import (ABBREV_LABEL, TIER_ABBREV, find_abbreviations,  # noqa: E402
+                    lookup_key, what_it_stands_for)
+
+
+def test_lookup_key_folds_a_phrase_not_a_word():
+    """normalise() would run 'able seaman' into one word. These meanings are
+    often two, so words have to survive as words."""
+    assert lookup_key("Able Seaman") == "able seaman"
+    assert lookup_key("Anglo-Saxon") == lookup_key("anglo saxon") == "anglo saxon"
+
+
+def test_the_gap_wordnet_could_not_fill(index):
+    """The reason this mode exists. A thesaurus gives sailor -> bluejacket; a
+    setter writes AB, and no synset says so."""
+    assert [a.text for a in find_abbreviations("sailor", index)] == [
+        "ab", "jack", "os", "tar"]
+
+
+def test_shorthand_is_not_filtered_by_the_dictionary(index):
+    """'cantuar' is not in our dictionary and is a perfectly good way to clue
+    'archbishop'. The attestation here is the convention, not the wordlist,
+    which is exactly why this is its own tier and not more synonyms —
+    find_synonyms() drops what the dictionary cannot vouch for, and this
+    must not."""
+    assert not index.attests("cantuar")
+    assert "cantuar" in [a.text
+                         for a in find_abbreviations("archbishop", index)]
+
+
+def test_source_markers_survive_as_bands(index):
+    """The list marks what only advanced cryptics use and what some setters
+    call unsound. Flattening those into one list would imply they are all
+    equally safe."""
+    notes = find_abbreviations("note", index)
+    by_band = {a.text: a.band for a in notes}
+    assert by_band["do"] == BAND_RANKED
+    assert by_band["a"] == BAND_UNATTESTED      # '+' in the source
+    assert ABBREV_LABEL[BAND_UNATTESTED] == "considered unsound by some"
+
+
+def test_bands_are_never_traded_off_here_either(index):
+    answers = find_abbreviations("note", index)
+    assert [a.band for a in answers] == sorted(a.band for a in answers)
+    assert answers == sorted(answers, key=lambda a: (a.band, a.text))
+
+
+def test_shorthand_is_not_scored(index):
+    """There is no frequency evidence that bears on whether AB is a fair way to
+    clue 'sailor'. A number here would be invented."""
+    for answer in find_abbreviations("sailor", index):
+        assert answer.score == 0.0
+        assert answer.tier == TIER_ABBREV
+
+
+def test_multi_word_shorthand_is_carried_through(index):
+    """A few entries are not abbreviations at all — 'uncle' is 'pawnbroker',
+    'spy' is 'old man'. The pattern matcher handles them like any phrase."""
+    assert "pawnbroker" in [a.text for a in find_abbreviations("uncle", index)]
+
+
+def test_lookup_ignores_case_and_punctuation(index):
+    assert (find_abbreviations("Sailor!", index)
+            == find_abbreviations("sailor", index))
+
+
+def test_a_short_form_says_what_it_stands_for(index):
+    """Typing 'ab' is typing a short form, not a clue word. An empty list would
+    be a lie about a word the table knows perfectly well."""
+    assert find_abbreviations("ab", index) == []
+    assert "sailor" in what_it_stands_for("ab", index)
+
+
+def test_unknown_word_has_no_shorthand(index):
+    assert find_abbreviations("zzzzqx", index) == []
+    assert what_it_stands_for("zzzzqx", index) == []
+
+
+def test_no_word_finds_no_shorthand(index):
+    assert find_abbreviations("", index) == []
+    assert find_abbreviations("  ", index) == []
+
+
+def test_shorthand_limit_is_respected(index):
+    assert len(find_abbreviations("note", index, limit=3)) == 3
+
+
+def test_the_list_loads_without_a_cache_rebuild():
+    """It is 42 KB of plain text, deliberately outside the pickle: correcting
+    one line must not cost a 30-second vocabulary rebuild."""
+    forward, reverse = vocab.load_abbreviations()
+    assert len(forward) > 2000
+    assert ("ab", BAND_RANKED) in forward["sailor"]
+    assert "sailor" in reverse["ab"]
 
 
 # -- diagnostics ------------------------------------------------------------

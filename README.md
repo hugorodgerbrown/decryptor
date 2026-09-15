@@ -93,10 +93,10 @@ iOS ignores manifest icons for Add to Home Screen and needs a real
 `apple-touch-icon` file, which is why this ships as a folder and not as the
 single HTML.
 
-## Three ways in
+## Four ways in
 
-A solver arrives at a crossword from one of three directions, so the app has
-three modes, chosen by the tabs at the top.
+A solver arrives at a crossword from one of four directions, so the app has
+four modes, chosen by the tabs at the top.
 
 **Anagrind** is the one above: fodder in, real answers out.
 
@@ -153,25 +153,58 @@ bites rather than passing a truncated list off as the whole answer.
 enough squares to look the entry up, only the definition half and a shape.
 
 ```
-quiet   + h__h    ->  hush
-want              ->  need, wish, lack, require, desire, ...
-sailor  + ______  ->  panama, boater
+want    ->  need, wish, lack, require, desire, ...
+quiet   ->  still, calm, silence, smooth, quietly, hush, ...
+sailor  ->  panama, crewman, skimmer, leghorn, boater, bluejacket
 ```
 
-The pattern is the same control the word finder uses, and here it is
-**optional**: without one you get the whole synset, ranked. With one you get
-the intersection, which is usually a single answer — `quiet` has twenty-four
-synonyms and exactly one of them fits `h__h`. Clicking an answer fills the
-squares, exactly as in word finder.
+One control, and no pattern filter. A synset is four entries at the median and
+twenty-four at its widest, which is a list you read rather than one you narrow
+— and narrowing a list by a grid is what the word finder tab already is. Two
+grids competing to do one job is a worse app than one grid that does it well.
 
-It is deliberately not a second anagram field. A thesaurus lookup narrowed by
-a grid is the one thing here a solver would otherwise put the app down and
-reach for a different book to do.
+It is deliberately not a second anagram field. An offline thesaurus is the one
+thing here a solver would otherwise put the app down and reach for a different
+book to do.
 
-Each mode has **separate inputs** — five controls, not two wearing three sets
-of labels. Fodder, a pattern and a definition word are different notations — a
-space is punctuation in one and a square in another — so switching tabs cannot
-bleed one into the next.
+**Shorthand** is the fourth, and the only one that is not a dictionary lookup
+at all. A setter writing `sailor` may simply mean the letters **AB** — that is
+a convention of the form, not a synonym, and no thesaurus will ever say so.
+
+```
+sailor  ->  ab, jack, os, tar
+doctor  ->  bm, dd, dr, gp, mb, md, mo, who
+king    ->  cr, er, gr, hm, k, lear, r
+```
+
+One control, like synonyms, and for the same reason: a clue word has a handful
+of these at most. Three things are deliberately different:
+
+**It is not scored.** Nothing about word frequency bears on whether AB is a
+fair way to clue `sailor`, so there is no number beside an answer — only the
+band, and alphabetical order inside it. A score here would be invented, which
+is the one thing the bands exist to prevent.
+
+**It is not filtered by the dictionary.** `cantuar` is not a word we attest and
+is a perfectly good way to clue `archbishop`. The attestation here is the
+convention itself, which is exactly why this is a tier of its own instead of
+more synonyms — `find_synonyms()` drops what the dictionary cannot vouch for,
+and this must not.
+
+**The bands mean something else.** The source marks entries that only turn up
+in advanced cryptics, and entries some setters regard as unsound. Those survive
+as the three bands rather than being flattened into one list that implies they
+are all equally safe — so `note` gives you `do`, `fa`, `la` as standard, and
+`a` through `g` under *Considered unsound*.
+
+A word with no shorthand may be shorthand itself, so typing `ab` says what it
+stands for rather than nothing at all.
+
+Each mode has **separate inputs** — five controls, not two wearing four sets of
+labels. Fodder, a pattern, a definition and a clue word are different notations
+— a space is punctuation in one and a square in another — so switching tabs
+cannot bleed one into the next. Only two modes take a grid, and only the word
+finder types into one.
 
 ## Two ways to run it
 
@@ -222,20 +255,33 @@ GET /api/solve?fodder=on+a+train,+up+to+its&enum=10,5&all=
 The synonyms mode is served the same way:
 
 ```
-GET /api/synonyms?word=quiet&pattern=h__h
+GET /api/synonyms?word=quiet
 
-{"answers":[{"text":"hush","parts":["hush"],"seps":[],"band":0,
-             "band_label":"ranked","tier":"word","score":10.41}]}
+{"answers":[{"text":"still","parts":["still"],"seps":[],"band":0,
+             "band_label":"ranked","tier":"word","score":17.82}, ...]}
 ```
 
-`pattern` is optional and, as in `/api/find`, carries its own enumeration —
-so there is no shape parameter to disagree with it.
+And the shorthand:
+
+```
+GET /api/abbreviations?word=sailor
+
+{"answers":[{"text":"ab","parts":["ab"],"seps":[],"band":0,
+             "band_label":"standard","tier":"abbrev"}, ...],
+ "meanings":[]}
+```
+
+Neither takes a `pattern`: they answer with a whole short list, and narrowing
+one against a grid is `/api/find`'s job. Note that `/api/abbreviations` returns
+no `score` at all rather than a zero, and that `meanings` is populated only
+when there are no answers: it is what the word is shorthand *for*, which is the
+useful reply to someone who typed `ab`.
 
 There is one fork per mode between the two builds — `getAnswers()`,
-`getMatches()` and `getSynonyms()` in the template.
+`getMatches()`, `getSynonyms()` and `getAbbreviations()` in the template.
 Everything else, including the banding and the tile animation, is shared.
 `verify_ui.js` runs the browser solver in Node against the real payload and
-checks all 24 Python expectations still hold, so the two cannot drift silently.
+checks all 32 Python expectations still hold, so the two cannot drift silently.
 That matters most for synonyms, where the browser and Python read the same map
 through different filters: the payload drops WordNet lemmas our own dictionary
 does not attest, so `find_synonyms()` drops them too and the two agree by
@@ -273,7 +319,7 @@ The rest of the checks are run directly. The `node` ones need no Python
 environment; the `uv run` ones use `.venv`.
 
 ```bash
-node verify_ui.js         # 24 browser/Python parity checks
+node verify_ui.js         # 32 browser/Python parity checks
 node verify_load.js       # the real loadDictionary(), end to end
 node verify_browser.js    # headless Chromium, bare and under CSP
 node verify_deploy.js     # serves dist/: offline install, and redeploy reaching a user
@@ -291,9 +337,9 @@ Three files, one responsibility each.
 | File | Responsibility |
 |---|---|
 | `solver.py` | Search, banding, scoring. Pure, no I/O, no framework. |
-| `vocab.py` | Where words and phrases come from. The only file you change to improve answer quality. |
+| `vocab.py` | Where words, phrases and the setters' shorthand come from. The only file you change to improve answer quality. |
 | `solve.py` | CLI. |
-| `web.py` | Django service: `/`, `/api/solve`, `/api/find`, `/api/synonyms`, `/api/diagnose`. |
+| `web.py` | Django service: `/`, `/api/solve`, `/api/find`, `/api/synonyms`, `/api/abbreviations`, `/api/diagnose`. |
 | `ui.template.html` | The interface, shared by both builds. |
 
 ### The search is not combinatorial
@@ -405,7 +451,7 @@ already the thing that separates a useful suggestion from a coincidence.
 
 The two callers want different slices of it, so the map stores the whole synset
 and each filters at query time — `word_swaps()` to same-length candidates,
-`find_synonyms()` to whatever the grid pattern says. The browser payload used
+`find_synonyms()` to whatever the dictionary attests. The browser payload used
 to ship only the diagnostics' slice, at 0.05 MB gzipped. Shipping all of it
 costs 0.32 MB, which is the app going from 2.2 MB to 2.6 MB, and it is the
 whole feature — a thesaurus that stops working on a train is not one.
@@ -422,8 +468,28 @@ and not the other way round.
 | [UKACD](data/LICENSE-UKACD.txt) 250k | 53k crossword-legal phrases, hyphenation, proper nouns | frequency |
 | WordNet 64k lemmas | 64k phrases — overlaps UKACD by only 13k; the synonyms behind both the diagnostics and the synonyms mode | crossword conventions |
 | wordfreq | Zipf frequencies | attestation |
+| [Setters' shorthand](data/abbreviations.txt) 3,077 pairs | what a clue word is conventionally written as — `sailor` → AB | anything about ordinary meaning |
 
-Union: **112,672 phrases, 237,658 words** (123k rankable).
+Union: **112,672 phrases, 237,658 words** (123k rankable), plus **2,061 clue
+words** with a setter's shorthand.
+
+The shorthand list is deliberately **not in `.vocab-cache.pkl`**. It is 42 KB
+of plain text that parses in a millisecond, so pickling it would buy nothing
+and would mean a 30-second vocabulary rebuild every time someone corrects a
+single line. `vocab.load_abbreviations()` reads it on every load.
+
+### ⚠️ The shorthand list has no licence yet
+
+`data/abbreviations.txt` is **not cleared for release.** It was compiled by
+Ross Beresford and posted to rec.puzzles.crosswords in 1992, and reaches us via
+[mhl/cryptic-crossword-indicators-and-abbreviations](https://github.com/mhl/cryptic-crossword-indicators-and-abbreviations),
+which publishes no licence at all.
+
+That Beresford also wrote UKACD does **not** help: UKACD carries an explicit
+BSD-3-Clause grant and this list carries nothing, and a Usenet post is not a
+licence. Permission is being sought. Until it is granted in writing, treat this
+file — and the built `dist/` that embeds it — as development only. The file
+header says the same thing, so nobody has to read this far to find out.
 
 UKACD is redistributed here under BSD-3-Clause, Copyright (c) 2009
 J Ross Beresford. The notice is reproduced verbatim in
@@ -443,13 +509,19 @@ require.
 5. **`web.py` is a dev server.** `DEBUG=True`, no CORS, no rate limiting, and
    `runserver` is single-process. Fine for testing, not for anything else.
 6. **WordNet is not a crossword thesaurus.** It is a lexical database, so it
-   gives `sailor` → `bluejacket` but not the conventions a setter actually
-   uses — `sailor` → `ab`, `tar`, `salt`. Measure the synonyms mode against
-   published clues before trusting it the way you trust the anagram side.
+   gives `sailor` → `bluejacket` and not `ab`. That is what the shorthand mode
+   is for, and the two stay in separate tabs precisely because they are
+   different kinds of claim. Measure both against published clues before
+   trusting them the way you trust the anagram side.
 7. **Synonyms are single words only.** `_synonym_map()` drops WordNet lemmas
    containing `_`, so `abandon` → `give up` is missing even though the pattern
    matcher handles multi-word entries natively. Lifting it is a `vocab.py`
    change and a cache rebuild, not a solver change.
+8. **The shorthand list is unlicensed** and is the one thing here that blocks a
+   release. See the warning under Sources.
+9. **The shorthand covers 2,061 clue words**, against 20,152 with synonyms. It
+   is a 1992 list: it knows `lner` for `old railway` and will not know anything
+   coined since.
 
 ## Django integration
 

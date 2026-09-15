@@ -70,7 +70,6 @@ input:focus{border-color:var(--ranked)}
    corrected: the count is a guess and the solver's own shape outranks it. */
 .field.err input,.field.err input:focus{border-color:var(--err)}
 .field.err label{color:var(--err)}
-.opt{opacity:.55;font-weight:400;text-transform:none;letter-spacing:0}
 .hint.err{color:var(--err)}
 
 /* The pattern grid: fifteen squares, because that is a crossword entry. You
@@ -99,10 +98,15 @@ input:focus{border-color:var(--ranked)}
 @keyframes land{from{transform:scale(.72);opacity:.4}to{transform:scale(1);opacity:1}}
 @media (prefers-reduced-motion:reduce){.sq.found{animation:none}}
 
-.tabs{display:flex;gap:2px;margin-bottom:18px;border-bottom:1px solid var(--rule)}
+.tabs{display:flex;gap:2px;margin-bottom:18px;border-bottom:1px solid var(--rule);
+      flex-wrap:wrap}
 .tab{background:none;border:0;border-bottom:2px solid transparent;color:var(--dim);
   font:inherit;font-size:13px;padding:7px 11px;margin-bottom:-1px;cursor:pointer}
 .tab[aria-selected="true"]{color:var(--text);border-bottom-color:var(--ranked)}
+/* Four tabs overflow a 375px phone by six pixels. Trimming the padding is
+   enough to keep them on one row; the wrap above is the fallback for anything
+   narrower, because a tab that scrolls out of sight is a tab nobody finds. */
+@media (max-width:420px){ .tab{padding:7px 8px} }
 
 /* A square nobody has filled in yet. Same box as a tile so the row does not
    reflow when a letter lands in it. */
@@ -163,6 +167,7 @@ input:focus{border-color:var(--ranked)}
     <button class="tab" id="tab-anagram" role="tab" aria-selected="true">Anagrind</button>
     <button class="tab" id="tab-finder" role="tab" aria-selected="false">Word finder</button>
     <button class="tab" id="tab-synonym" role="tab" aria-selected="false">Synonyms</button>
+    <button class="tab" id="tab-abbrev" role="tab" aria-selected="false">Shorthand</button>
   </div>
 
   <div class="field" id="fodder-field">
@@ -183,26 +188,20 @@ input:focus{border-color:var(--ranked)}
                          comma or hyphen for a word break.">
     </div>
   </div>
-  <!-- Synonyms takes two controls, so they travel together: the definition
-       word from the clue, and what the grid already knows about the answer.
-       The pattern is optional here — without it you get the whole synset. -->
-  <div id="synonym-field" hidden>
-    <div class="field">
-      <label for="synonym">Definition</label>
-      <input id="synonym" placeholder="quiet" autocomplete="off"
-             autocapitalize="off" autocorrect="off" spellcheck="false">
-    </div>
-    <div class="field">
-      <label for="synpattern">Pattern <span class="opt">optional</span></label>
-      <div class="gridwrap">
-        <div class="grid" id="syngrid"></div>
-        <input id="synpattern" autocomplete="off" autocapitalize="off"
-               autocorrect="off" spellcheck="false" inputmode="text"
-               aria-label="Pattern, optional. Type the letters you already have,
-                           space for an unknown square, comma or hyphen for a
-                           word break.">
-      </div>
-    </div>
+  <!-- One control. A synset is four entries at the median, so there is
+       nothing here to narrow down — and narrowing a list by a grid is what the
+       word finder tab already does. -->
+  <div class="field" id="synonym-field" hidden>
+    <label for="synonym">Definition</label>
+    <input id="synonym" placeholder="quiet" autocomplete="off"
+           autocapitalize="off" autocorrect="off" spellcheck="false">
+  </div>
+  <!-- Likewise one control, and its own: a clue word and a thesaurus lookup
+       are not the same question, so they do not share a box. -->
+  <div class="field" id="abbrev-field" hidden>
+    <label for="abbrev">Clue word</label>
+    <input id="abbrev" placeholder="sailor" autocomplete="off"
+           autocapitalize="off" autocorrect="off" spellcheck="false">
   </div>
   <div class="field" id="enum-field">
     <label for="enum">Enumeration</label>
@@ -230,6 +229,8 @@ const FREQ = new Map();          // word -> zipf (built eagerly, 138 ms)
 const WORDS_BY = new Map();      // "len|key" -> [word]   (lazy, per length)
 const PHRASES_BY = new Map();    // "key|lengths" -> [..] (lazy, per total)
 const SYN = new Map();           // word -> Set of synonyms, whole synset
+const ABBREV = new Map();        // clue word -> [[short, band]]
+const STANDS_FOR = new Map();    // and back: short -> [clue word]
 const WORD_GROUPS = new Map();   // length -> unparsed block
 const PHRASE_GROUPS = new Map(); // total  -> unparsed block
 const builtLengths = new Set(), builtTotals = new Set();
@@ -239,6 +240,11 @@ const RANKABLE = 1.0, COMBO_MIN = 2.3;
 const norm = s => s.normalize("NFKD").replace(/[\u0300-\u036f]/g, "")
                    .toLowerCase().replace(/[^a-z]/g, "");
 const akey = s => norm(s).split("").sort().join("");
+// Mirrors lookup_key() in solver.py: the abbreviation table is keyed by phrases
+// like 'able seaman', so words survive as words and everything between them
+// goes. 'Anglo-Saxon' and 'anglo saxon' land on the same key.
+const lookupKey = s => (s.normalize("NFKD").replace(/[\u0300-\u036f]/g, "")
+                         .toLowerCase().match(/[a-z0-9]+/g) || []).join(" ");
 
 function splitEntry(entry){
   const parts = [], seps = [];
@@ -281,6 +287,25 @@ function ensureTotal(total){
   }
 }
 
+/** The setters' shorthand, and its inverse. Only the forward direction is in
+ *  the payload — inverting 2k lines here is cheaper than shipping both. */
+function loadAbbreviations(blob){
+  const MARKS = {"*": 1, "+": 2};
+  for (const line of (blob || "").split("\n")) {
+    if (!line) continue;
+    const [key, ...shorts] = line.split("\t");
+    const entries = shorts.map(s => {
+      const band = MARKS[s.slice(-1)] || 0;
+      return [band ? s.slice(0, -1) : s, band];
+    });
+    ABBREV.set(key, entries);
+    for (const [short] of entries) {
+      const back = STANDS_FOR.get(lookupKey(short));
+      if (back) back.push(key); else STANDS_FOR.set(lookupKey(short), [key]);
+    }
+  }
+}
+
 class UnsupportedBrowser extends Error {}
 
 async function loadDictionary(){
@@ -297,7 +322,7 @@ async function loadDictionary(){
 
   const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
   const text = await new Response(stream).text();
-  const [wordBlob, freqBlob, phraseBlob, synBlob] = text.split("\x1e");
+  const [wordBlob, freqBlob, phraseBlob, synBlob, abbrevBlob] = text.split("\x1e");
 
   const wordGroups = wordBlob.split("\x1d");
   const freqGroups = freqBlob.split("\x1d");
@@ -327,6 +352,8 @@ async function loadDictionary(){
     const [word, ...rest] = line.split(" ");
     SYN.set(word, new Set(rest));
   }
+
+  loadAbbreviations(abbrevBlob);
   return {words: total, groups: wordGroups.length};
 }
 
@@ -530,20 +557,15 @@ function findPattern(pattern, limit = 0){
  * same control the word finder uses and is optional here — without one, the
  * whole synset comes back.
  * ====================================================================== */
-function findSynonyms(word, pattern, limit = 0){
+function findSynonyms(word, limit = 0){
   const target = norm(word);
   if (!target) return [];
-  const parsed = typeof pattern === "string" ? parsePattern(pattern) : pattern;
-  const pat = parsed && parsed.words.length ? parsed : null;
-
   const out = [], seen = new Set();
   for (const candidate of SYN.get(target) || []) {
     const {parts, seps} = splitEntry(candidate);
     if (!parts.length) continue;
     const id = parts.join(" ");
     if (seen.has(id)) continue;
-    if (pat && (parts.length !== pat.words.length
-                || !parts.every((w, i) => slotMatches(pat.words[i], w)))) continue;
     seen.add(id);
     let text = parts[0];
     for (let i = 1; i < parts.length; i++) text += (seps[i - 1] || " ") + parts[i];
@@ -553,6 +575,41 @@ function findSynonyms(word, pattern, limit = 0){
   }
   out.sort((a, b) => a.band - b.band || b.score - a.score || a.text.localeCompare(b.text));
   return limit ? out.slice(0, limit) : out;
+}
+
+/* ====================================================================== *
+ * Abbreviations — mirrors find_abbreviations in solver.py.
+ *
+ * The fourth way in, and the only one that is not a dictionary lookup. A
+ * setter writing 'sailor' may mean the letters AB, and no thesaurus will say
+ * so: it is a convention of the form, attested by the setters who use it.
+ *
+ * Not scored. Nothing about word frequency bears on whether AB is a fair way
+ * to clue 'sailor', so the order inside a band is alphabetical and there is no
+ * number — inventing one is what the bands exist to prevent.
+ * ====================================================================== */
+function findAbbreviations(word, limit = 0){
+  const key = lookupKey(word);
+  if (!key) return [];
+  const out = [], seen = new Set();
+  for (const [short, band] of ABBREV.get(key) || []) {
+    const {parts, seps} = splitEntry(short);
+    if (!parts.length) continue;
+    const id = parts.join(" ");
+    if (seen.has(id)) continue;
+    seen.add(id);
+    let text = parts[0];
+    for (let i = 1; i < parts.length; i++) text += (seps[i - 1] || " ") + parts[i];
+    out.push({text, parts, seps, band, score: 0});
+  }
+  out.sort((a, b) => a.band - b.band || a.text.localeCompare(b.text));
+  return limit ? out.slice(0, limit) : out;
+}
+
+/** The reverse, for the dead end: a word with no shorthand may be one itself. */
+function whatItStandsFor(short, limit = 12){
+  const key = lookupKey(short);
+  return key ? (STANDS_FOR.get(key) || []).slice().sort().slice(0, limit) : [];
 }
 
 /* ====================================================================== *
@@ -950,6 +1007,15 @@ const BAND_WHY = [
   "In the dictionary, but with no frequency evidence to rank it.",
   "A legal split of the letters. No dictionary attests it."
 ];
+// Shorthand reuses the three bands because it has the same shape — three
+// grades of evidence, never traded off — but the evidence is about a
+// convention's standing, not a word's frequency, so it gets its own words.
+const ABBREV_NAME = ["Standard", "Advanced cryptics only", "Considered unsound"];
+const ABBREV_WHY = [
+  null,
+  "Sound, but you will mostly meet it in advanced cryptics.",
+  "Some setters regard this one as unfair. Treat it as a last resort."
+];
 let showUnattested = false, ready = false, seq = 0;
 const REMOTE = !PAYLOAD;   // Django serves the page with no payload embedded
 
@@ -969,10 +1035,11 @@ const DIAGNOSTICS = false;
 // the render path — only the search and the shape of the input differ.
 const tabs = {anagram: document.getElementById("tab-anagram"),
               finder:  document.getElementById("tab-finder"),
-              synonym: document.getElementById("tab-synonym")};
+              synonym: document.getElementById("tab-synonym"),
+              abbrev:  document.getElementById("tab-abbrev")};
 const patternEl = document.getElementById("pattern");
 const synonymEl = document.getElementById("synonym");
-const synPatternEl = document.getElementById("synpattern");
+const abbrevEl = document.getElementById("abbrev");
 // One input per notation, not one input wearing three labels. Fodder, a
 // pattern and a definition word are different things — a space is punctuation
 // in one and a square in another — so each gets its own field and none of them
@@ -981,11 +1048,12 @@ const FIELDS = {
   anagram: {input: fodderEl,  box: document.getElementById("fodder-field")},
   finder:  {input: patternEl, box: document.getElementById("pattern-field")},
   synonym: {input: synonymEl, box: document.getElementById("synonym-field")},
+  abbrev:  {input: abbrevEl,   box: document.getElementById("abbrev-field")},
 };
-// Each grid owns its own input and its own revealed answer.
+// Only one mode types into squares, but the grid stays a factory: it owns its
+// input and its revealed answer rather than reaching for module-level state.
 const GRIDS = {
-  finder:  makeGrid(patternEl, document.getElementById("grid")),
-  synonym: makeGrid(synPatternEl, document.getElementById("syngrid")),
+  finder: makeGrid(patternEl, document.getElementById("grid")),
 };
 let mode = "anagram";
 
@@ -996,6 +1064,8 @@ const FINDER_LIMIT = 200;
 // A synset is small — 4 synonyms is the median, 60 the widest — so this only
 // ever bites when no pattern has been typed.
 const SYNONYM_LIMIT = 200;
+// No clue word has anywhere near this many, so it never bites in practice.
+const ABBREV_LIMIT = 200;
 
 function setMode(next){
   if (next === mode) return;
@@ -1054,31 +1124,78 @@ async function getMatches(pat, raw){
 }
 
 /** The same fork again, for synonyms. */
-async function getSynonyms(word, pat, raw){
-  if (!REMOTE) return findSynonyms(word, pat, SYNONYM_LIMIT);
-  const q = new URLSearchParams({word, pattern: raw, limit: String(SYNONYM_LIMIT)});
+async function getSynonyms(word){
+  if (!REMOTE) return findSynonyms(word, SYNONYM_LIMIT);
+  const q = new URLSearchParams({word, limit: String(SYNONYM_LIMIT)});
   const res = await fetch("/api/synonyms?" + q);
   if (!res.ok) throw new Error(`solver returned ${res.status}`);
   return (await res.json()).answers;
+}
+
+/** And once more, for the setters' shorthand. */
+async function getAbbreviations(word){
+  if (!REMOTE) return {answers: findAbbreviations(word, ABBREV_LIMIT),
+                       meanings: []};
+  const q = new URLSearchParams({word, limit: String(ABBREV_LIMIT)});
+  const res = await fetch("/api/abbreviations?" + q);
+  if (!res.ok) throw new Error(`solver returned ${res.status}`);
+  return await res.json();
 }
 
 async function refresh(){
   if (!ready) return;
   if (mode === "finder") return refreshFinder();
   if (mode === "synonym") return refreshSynonyms();
+  if (mode === "abbrev") return refreshAbbreviations();
   return refreshAnagram();
 }
 
-/** Synonyms: the definition word is the query and the pattern only narrows it,
- *  so unlike the word finder an empty grid is a perfectly good question. */
-async function refreshSynonyms(){
-  const word = synonymEl.value;
-  const raw = synPatternEl.value;
-  const pat = parsePattern(raw);
+/** Shorthand: one control, like synonyms. A clue word has a handful of these
+ *  at most, so there is nothing to narrow down. */
+async function refreshAbbreviations(){
+  const word = abbrevEl.value;
 
   countEl.classList.remove("over");
-  countEl.textContent = pat.total ? String(pat.total) : "\u2014";
-  GRIDS.synonym.render();
+  countEl.textContent = "\u2014";
+  resultsEl.textContent = "";
+  hintEl.classList.remove("err");
+
+  if (!lookupKey(word)) {
+    hintEl.textContent = "Type the word as the clue writes it";
+    return;
+  }
+  hintEl.textContent = "";
+
+  const mine = ++seq;
+  const t0 = performance.now();
+  let out;
+  try {
+    out = await getAbbreviations(word);
+  } catch (err) {
+    if (mine === seq) hintEl.textContent = `Could not reach the solver: ${err.message}`;
+    return;
+  }
+  if (mine !== seq) return;
+  render(out.answers, null, performance.now() - t0);
+  // A word with no shorthand may be one itself. Saying so beats a dead end.
+  const stands = out.answers.length ? []
+    : (REMOTE ? out.meanings || [] : whatItStandsFor(word));
+  if (stands.length) {
+    const p = document.createElement("div");
+    p.className = "status";
+    p.textContent = `\u201c${lookupKey(word)}\u201d is itself shorthand \u2014 `
+                  + `it can mean ${stands.join(", ")}.`;
+    resultsEl.appendChild(p);
+  }
+}
+
+/** Synonyms: one word in, the synset out. There is no second control to
+ *  cross-check, so no error state and no count to disagree with. */
+async function refreshSynonyms(){
+  const word = synonymEl.value;
+
+  countEl.classList.remove("over");
+  countEl.textContent = "\u2014";
   resultsEl.textContent = "";
   hintEl.classList.remove("err");
 
@@ -1092,13 +1209,13 @@ async function refreshSynonyms(){
   const t0 = performance.now();
   let answers;
   try {
-    answers = await getSynonyms(word, pat.words.length ? pat : null, raw);
+    answers = await getSynonyms(word);
   } catch (err) {
     if (mine === seq) hintEl.textContent = `Could not reach the solver: ${err.message}`;
     return;
   }
   if (mine !== seq) return;
-  render(answers, pat.enu, performance.now() - t0);
+  render(answers, null, performance.now() - t0);
   if (answers.length >= SYNONYM_LIMIT)
     hintEl.textContent = `Showing the first ${SYNONYM_LIMIT}.`;
 }
@@ -1189,15 +1306,15 @@ function render(answers, enu, ms){
   if (!answers.length) {
     const p = document.createElement("div");
     p.className = "status empty-state";
-    p.textContent = mode === "finder"
-      ? "No attested entry fits that pattern."
-      : mode === "synonym"
-        ? (parsePattern(synPatternEl.value).words.length
-             ? "No synonym of that word fits those squares."
-             : "No synonyms for that word. The thesaurus covers 20,152 of them.")
-        : showUnattested
-          ? "No arrangement of these letters makes words of that shape."
-          : "No attested answer fits these letters.";
+    p.textContent = mode === "abbrev"
+      ? "No shorthand for that word. The list covers 2,061 of them."
+      : mode === "finder"
+        ? "No attested entry fits that pattern."
+        : mode === "synonym"
+          ? "No synonyms for that word. The thesaurus covers 20,152 of them."
+          : showUnattested
+            ? "No arrangement of these letters makes words of that shape."
+            : "No attested answer fits these letters.";
     resultsEl.appendChild(p);
     if (DIAGNOSTICS) {
       if (!REMOTE) renderSuggestions(diagnose(fodderEl.value, enu));
@@ -1214,13 +1331,17 @@ function render(answers, enu, ms){
       current = a.band;
       group = document.createElement("section");
       group.className = "band b" + a.band;
+      // Shorthand grades a convention, not a frequency, so it says so.
+      const names = mode === "abbrev" ? ABBREV_NAME : BAND_NAME;
+      const whys = mode === "abbrev" ? ABBREV_WHY : BAND_WHY;
       const head = document.createElement("div");
       head.className = "band-head";
-      head.innerHTML = `<i class="dot"></i><span>${BAND_NAME[a.band]}</span><i class="line"></i>`;
+      head.innerHTML = `<i class="dot"></i><span></span><i class="line"></i>`;
+      head.querySelector("span").textContent = names[a.band];
       group.appendChild(head);
-      if (BAND_WHY[a.band]) {
+      if (whys[a.band]) {
         const why = document.createElement("p");
-        why.className = "why"; why.textContent = BAND_WHY[a.band];
+        why.className = "why"; why.textContent = whys[a.band];
         group.appendChild(why);
       }
       resultsEl.appendChild(group);
@@ -1229,12 +1350,15 @@ function render(answers, enu, ms){
     btn.className = "answer";
     btn.innerHTML = `<span class="txt"></span><span class="num"></span>`;
     btn.querySelector(".txt").textContent = a.text;
-    btn.querySelector(".num").textContent = a.band === 0 ? a.score.toFixed(1) : "\u2014";
+    btn.querySelector(".num").textContent =
+      mode === "abbrev" ? "" : a.band === 0 ? a.score.toFixed(1) : "\u2014";
     btn.addEventListener("click", () => {
       for (const el of resultsEl.querySelectorAll(".answer")) el.setAttribute("aria-current", "false");
       btn.setAttribute("aria-current", "true");
+      // Only two modes have somewhere to put an answer: the tray and the
+      // grid. In the two list modes the click is just a selection.
       if (mode === "anagram") arrangeInto(a.parts, enu.seps);
-      else GRIDS[mode].reveal(a);
+      else if (GRIDS[mode]) GRIDS[mode].reveal(a);
     });
     group.appendChild(btn);
   }
@@ -1307,7 +1431,8 @@ function queue(){
   timer = setTimeout(refresh, 90);
 }
 fodderEl.addEventListener("input", () => { trackFodder(); queue(); });
-synonymEl.addEventListener("input", () => { GRIDS.synonym.clear(); queue(); });
+synonymEl.addEventListener("input", queue);
+abbrevEl.addEventListener("input", queue);
 
 for (const [name, tab] of Object.entries(tabs))
   tab.addEventListener("click", () => setMode(name));
