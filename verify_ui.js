@@ -8,7 +8,8 @@ js = js.slice(0, js.lastIndexOf('/*'));
 js = js.replace(/const PAYLOAD = "[^"]*";/, '').replace('"use strict";', '');
 
 const test = `
-const blob0 = ZLIB.gunzipSync(FS.readFileSync('payload.gz')).toString();
+const blob0 = ZLIB.gunzipSync(
+  Buffer.from(FS.readFileSync('payload.b64', 'utf8').trim(), 'base64')).toString();
 const [wordBlob, freqBlob, phraseBlob, synBlob] = blob0.split('\\x1e');
 const A = "0123456789abcdefghijklmnopqrstuvwxyz";
 const freqGroups = freqBlob.split('\\x1d');
@@ -69,6 +70,31 @@ const sh = alternativeShapes('on a train, up to its');
 const okSh = sh.some(s => s.enumeration === '10,5');
 console.log(\`\${okSh ? 'PASS' : 'FAIL'}  alternativeShapes finds 10,5\`);
 if (!okSwap || conf.length !== 1 || !okNm || !okSh) fail++;
+// synonyms parity — the same expectations test_solver.py holds
+const synCases = [
+  ['want',  null,   a => a.includes('need') && a.includes('wish'), "want -> need, wish"],
+  ['quiet', 'h__h', a => a.length === 1 && a[0] === 'hush',        "quiet + h__h -> hush only"],
+  ['quiet', 'h_,_h', a => a.length === 0,                          "pattern carries its enumeration"],
+  ['quiet', '_h_h', a => !a.includes('hush'),                      "synonyms match positionally"],
+  ['quiet', null,   a => !a.includes('quiet'),                     "a word is not its own synonym"],
+  ['',      null,   a => a.length === 0,                           "no word finds nothing"],
+  ['zzzzqx', null,  a => a.length === 0,                           "unknown word finds nothing"],
+];
+for (const [word, pat, ok, label] of synCases) {
+  const texts = findSynonyms(word, pat).map(a => a.text);
+  const pass = ok(texts);
+  if (!pass) fail++;
+  console.log(\`\${pass ? 'PASS' : 'FAIL'}  \${label}\${pass ? '' : '  got ' + JSON.stringify(texts.slice(0, 6))}\`);
+}
+const synBands = findSynonyms('quiet', null);
+const synOrdered = JSON.stringify(synBands.map(a => a.band))
+  === JSON.stringify([...synBands].sort((a, b) => a.band - b.band || b.score - a.score
+                                                 || a.text.localeCompare(b.text)).map(a => a.band));
+console.log(\`\${synOrdered ? 'PASS' : 'FAIL'}  synonym bands monotonic\`);
+if (!synOrdered) fail++;
+const capped = findSynonyms('run', null, 3);
+console.log(\`\${capped.length === 3 ? 'PASS' : 'FAIL'}  synonym limit respected\`);
+if (capped.length !== 3) fail++;
 PROC.exit(fail ? 1 : 0);
 `;
 eval(js + test.replace(/ZLIB/g, 'require("zlib")').replace(/FS/g, 'require("fs")').replace(/PROC/g, 'process'));

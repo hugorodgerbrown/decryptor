@@ -1,4 +1,4 @@
-const CACHE = "decryptor-56e8bedf5b2d";
+const CACHE = "decryptor-fff2b2e70f34";
 const ASSETS = ["./", "./index.html", "./manifest.webmanifest",
                 "./icon-180.png", "./icon-192.png", "./icon-512.png",
                 "./icon-maskable.png"];

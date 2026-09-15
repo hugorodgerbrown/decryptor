@@ -14,7 +14,7 @@ $ ./solve.py "on a train, up to its" "10,5"
 ## Putting it on your home screen
 
 `dist/` is an installable web app: manifest, icons, and a service worker that
-precaches everything. It is 2.2 MB of static files with no backend.
+precaches everything. It is 2.6 MB of static files with no backend.
 
 **Testing it locally.** `devserver.py` serves `dist/` on
 <http://localhost:8137>, which is a secure origin, so the service worker
@@ -49,6 +49,7 @@ deploy and the thing you edit toward.
 |---|---|---|
 | nothing — first deploy | *(nothing)* | commit `dist/`, push |
 | `ui.template.html` | `python3 build_dist.py` | commit `dist/`, push |
+| `build_payload.py` | `uv run python build_payload.py && python3 build_dist.py` | commit `dist/`, push |
 | the dictionary or `vocab.py` | `./build.sh` | commit `dist/`, push |
 
 `build_dist.py` needs only the standard library and works from a fresh clone:
@@ -92,10 +93,10 @@ iOS ignores manifest icons for Add to Home Screen and needs a real
 `apple-touch-icon` file, which is why this ships as a folder and not as the
 single HTML.
 
-## Two ways in
+## Three ways in
 
-A solver arrives at a crossword from one of two directions, so the app has two
-modes, chosen by the tabs at the top.
+A solver arrives at a crossword from one of three directions, so the app has
+three modes, chosen by the tabs at the top.
 
 **Anagrind** is the one above: fodder in, real answers out.
 
@@ -148,13 +149,33 @@ tier, because a pattern with no match has no legal split to fall back on, only
 a wrong grid. Results are capped at 200, and the app says so when the cap
 bites rather than passing a truncated list off as the whole answer.
 
-The two modes have **separate inputs**. Fodder and a pattern are different
-notations — a space is punctuation in one and a square in the other — so
-switching tabs cannot bleed one into the other.
+**Synonyms** is the third — for the clue where you have neither the fodder nor
+enough squares to look the entry up, only the definition half and a shape.
+
+```
+quiet   + h__h    ->  hush
+want              ->  need, wish, lack, require, desire, ...
+sailor  + ______  ->  panama, boater
+```
+
+The pattern is the same control the word finder uses, and here it is
+**optional**: without one you get the whole synset, ranked. With one you get
+the intersection, which is usually a single answer — `quiet` has twenty-four
+synonyms and exactly one of them fits `h__h`. Clicking an answer fills the
+squares, exactly as in word finder.
+
+It is deliberately not a second anagram field. A thesaurus lookup narrowed by
+a grid is the one thing here a solver would otherwise put the app down and
+reach for a different book to do.
+
+Each mode has **separate inputs** — five controls, not two wearing three sets
+of labels. Fodder, a pattern and a definition word are different notations — a
+space is punctuation in one and a square in another — so switching tabs cannot
+bleed one into the next.
 
 ## Two ways to run it
 
-**Standalone** — `decryptor.html`, one file, 2.2 MB. Open it on a phone or a
+**Standalone** — `decryptor.html`, one file, 2.6 MB. Open it on a phone or a
 laptop; the dictionary is gzipped and embedded, so it needs no install and no
 server. The combinatorial tier is capped at 400 results here.
 
@@ -198,10 +219,27 @@ GET /api/solve?fodder=on+a+train,+up+to+its&enum=10,5&all=
              "band":0,"band_label":"ranked","tier":"phrase","score":11.195}]}
 ```
 
-There is one fork between the two builds — `getAnswers()` in the template.
+The synonyms mode is served the same way:
+
+```
+GET /api/synonyms?word=quiet&pattern=h__h
+
+{"answers":[{"text":"hush","parts":["hush"],"seps":[],"band":0,
+             "band_label":"ranked","tier":"word","score":10.41}]}
+```
+
+`pattern` is optional and, as in `/api/find`, carries its own enumeration —
+so there is no shape parameter to disagree with it.
+
+There is one fork per mode between the two builds — `getAnswers()`,
+`getMatches()` and `getSynonyms()` in the template.
 Everything else, including the banding and the tile animation, is shared.
 `verify_ui.js` runs the browser solver in Node against the real payload and
-checks all 15 Python expectations still hold, so the two cannot drift silently.
+checks all 24 Python expectations still hold, so the two cannot drift silently.
+That matters most for synonyms, where the browser and Python read the same map
+through different filters: the payload drops WordNet lemmas our own dictionary
+does not attest, so `find_synonyms()` drops them too and the two agree by
+construction rather than by luck.
 
 ## Setup
 
@@ -235,7 +273,7 @@ The rest of the checks are run directly. The `node` ones need no Python
 environment; the `uv run` ones use `.venv`.
 
 ```bash
-node verify_ui.js         # 15 browser/Python parity checks
+node verify_ui.js         # 24 browser/Python parity checks
 node verify_load.js       # the real loadDictionary(), end to end
 node verify_browser.js    # headless Chromium, bare and under CSP
 node verify_deploy.js     # serves dist/: offline install, and redeploy reaching a user
@@ -255,7 +293,7 @@ Three files, one responsibility each.
 | `solver.py` | Search, banding, scoring. Pure, no I/O, no framework. |
 | `vocab.py` | Where words and phrases come from. The only file you change to improve answer quality. |
 | `solve.py` | CLI. |
-| `web.py` | Django service: `/`, `/api/solve`, `/api/diagnose`. |
+| `web.py` | Django service: `/`, `/api/solve`, `/api/find`, `/api/synonyms`, `/api/diagnose`. |
 | `ui.template.html` | The interface, shared by both builds. |
 
 ### The search is not combinatorial
@@ -359,12 +397,30 @@ Synonyms are precomputed into `.vocab-cache.pkl`. Querying WordNet live cost
 8.6 s on first call, which was the entire runtime of the diagnostics; building
 the map at cache time also keeps nltk off the runtime path.
 
+### The synonym map pays for itself twice
+
+The same map answers the diagnostics above and the synonyms mode, which is why
+the mode was worth building: the data was already there, already offline, and
+already the thing that separates a useful suggestion from a coincidence.
+
+The two callers want different slices of it, so the map stores the whole synset
+and each filters at query time — `word_swaps()` to same-length candidates,
+`find_synonyms()` to whatever the grid pattern says. The browser payload used
+to ship only the diagnostics' slice, at 0.05 MB gzipped. Shipping all of it
+costs 0.32 MB, which is the app going from 2.2 MB to 2.6 MB, and it is the
+whole feature — a thesaurus that stops working on a train is not one.
+
+`SYNONYM_MIN_ZIPF` is a floor on the word you *look up*, not on what comes
+back: 20,152 words have a synset, and they are the common ones, which is what
+a clue's definition half is made of. `bluejacket` is reachable from `sailor`
+and not the other way round.
+
 ## Sources
 
 | Source | Contributes | Cannot tell us |
 |---|---|---|
 | [UKACD](data/LICENSE-UKACD.txt) 250k | 53k crossword-legal phrases, hyphenation, proper nouns | frequency |
-| WordNet 64k lemmas | 64k phrases — overlaps UKACD by only 13k | crossword conventions |
+| WordNet 64k lemmas | 64k phrases — overlaps UKACD by only 13k; the synonyms behind both the diagnostics and the synonyms mode | crossword conventions |
 | wordfreq | Zipf frequencies | attestation |
 
 Union: **112,672 phrases, 237,658 words** (123k rankable).
@@ -386,6 +442,14 @@ require.
 4. **4-word `--all` takes ~450 ms.** Queue it rather than serving inline.
 5. **`web.py` is a dev server.** `DEBUG=True`, no CORS, no rate limiting, and
    `runserver` is single-process. Fine for testing, not for anything else.
+6. **WordNet is not a crossword thesaurus.** It is a lexical database, so it
+   gives `sailor` → `bluejacket` but not the conventions a setter actually
+   uses — `sailor` → `ab`, `tar`, `salt`. Measure the synonyms mode against
+   published clues before trusting it the way you trust the anagram side.
+7. **Synonyms are single words only.** `_synonym_map()` drops WordNet lemmas
+   containing `_`, so `abandon` → `give up` is missing even though the pattern
+   matcher handles multi-word entries natively. Lifting it is a `vocab.py`
+   change and a cache rebuild, not a solver change.
 
 ## Django integration
 

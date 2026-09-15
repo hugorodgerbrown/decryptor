@@ -70,6 +70,7 @@ input:focus{border-color:var(--ranked)}
    corrected: the count is a guess and the solver's own shape outranks it. */
 .field.err input,.field.err input:focus{border-color:var(--err)}
 .field.err label{color:var(--err)}
+.opt{opacity:.55;font-weight:400;text-transform:none;letter-spacing:0}
 .hint.err{color:var(--err)}
 
 /* The pattern grid: fifteen squares, because that is a crossword entry. You
@@ -161,6 +162,7 @@ input:focus{border-color:var(--ranked)}
   <div class="tabs" role="tablist">
     <button class="tab" id="tab-anagram" role="tab" aria-selected="true">Anagrind</button>
     <button class="tab" id="tab-finder" role="tab" aria-selected="false">Word finder</button>
+    <button class="tab" id="tab-synonym" role="tab" aria-selected="false">Synonyms</button>
   </div>
 
   <div class="field" id="fodder-field">
@@ -179,6 +181,27 @@ input:focus{border-color:var(--ranked)}
              autocorrect="off" spellcheck="false" inputmode="text"
              aria-label="Pattern. Type letters, space for an unknown square,
                          comma or hyphen for a word break.">
+    </div>
+  </div>
+  <!-- Synonyms takes two controls, so they travel together: the definition
+       word from the clue, and what the grid already knows about the answer.
+       The pattern is optional here — without it you get the whole synset. -->
+  <div id="synonym-field" hidden>
+    <div class="field">
+      <label for="synonym">Definition</label>
+      <input id="synonym" placeholder="quiet" autocomplete="off"
+             autocapitalize="off" autocorrect="off" spellcheck="false">
+    </div>
+    <div class="field">
+      <label for="synpattern">Pattern <span class="opt">optional</span></label>
+      <div class="gridwrap">
+        <div class="grid" id="syngrid"></div>
+        <input id="synpattern" autocomplete="off" autocapitalize="off"
+               autocorrect="off" spellcheck="false" inputmode="text"
+               aria-label="Pattern, optional. Type the letters you already have,
+                           space for an unknown square, comma or hyphen for a
+                           word break.">
+      </div>
     </div>
   </div>
   <div class="field" id="enum-field">
@@ -206,7 +229,7 @@ const PAYLOAD = "__PAYLOAD__";
 const FREQ = new Map();          // word -> zipf (built eagerly, 138 ms)
 const WORDS_BY = new Map();      // "len|key" -> [word]   (lazy, per length)
 const PHRASES_BY = new Map();    // "key|lengths" -> [..] (lazy, per total)
-const SYN = new Map();           // word -> Set of same-length synonyms
+const SYN = new Map();           // word -> Set of synonyms, whole synset
 const WORD_GROUPS = new Map();   // length -> unparsed block
 const PHRASE_GROUPS = new Map(); // total  -> unparsed block
 const builtLengths = new Set(), builtTotals = new Set();
@@ -500,6 +523,39 @@ function findPattern(pattern, limit = 0){
 }
 
 /* ====================================================================== *
+ * Synonyms — mirrors find_synonyms in solver.py.
+ *
+ * The third way in: you have the definition half of the clue and a shape, but
+ * no fodder and not enough squares to look the entry up. The pattern is the
+ * same control the word finder uses and is optional here — without one, the
+ * whole synset comes back.
+ * ====================================================================== */
+function findSynonyms(word, pattern, limit = 0){
+  const target = norm(word);
+  if (!target) return [];
+  const parsed = typeof pattern === "string" ? parsePattern(pattern) : pattern;
+  const pat = parsed && parsed.words.length ? parsed : null;
+
+  const out = [], seen = new Set();
+  for (const candidate of SYN.get(target) || []) {
+    const {parts, seps} = splitEntry(candidate);
+    if (!parts.length) continue;
+    const id = parts.join(" ");
+    if (seen.has(id)) continue;
+    if (pat && (parts.length !== pat.words.length
+                || !parts.every((w, i) => slotMatches(pat.words[i], w)))) continue;
+    seen.add(id);
+    let text = parts[0];
+    for (let i = 1; i < parts.length; i++) text += (seps[i - 1] || " ") + parts[i];
+    // No unattested tier: a synonym is in the thesaurus or it is not, and one
+    // we invented would be evidence about nothing.
+    out.push({text, parts, seps, band: band(parts, false), score: score(parts)});
+  }
+  out.sort((a, b) => a.band - b.band || b.score - a.score || a.text.localeCompare(b.text));
+  return limit ? out.slice(0, limit) : out;
+}
+
+/* ====================================================================== *
  * Diagnostics — mirrors the same functions in solver.py.
  * ====================================================================== */
 const SWAP_MIN_ZIPF = 3.0;
@@ -675,10 +731,13 @@ function flip(before){
 
 /* ---------------------------------------------------------------------- *
  * The pattern grid. The squares are the control, not a preview of one.
+ *
+ * Two modes type into squares — word finder and synonyms — so this is a
+ * factory rather than a singleton. Each grid owns its input and its revealed
+ * answer, which is the rule the fields already follow: one notation per
+ * control, and no bleed between modes.
  * ---------------------------------------------------------------------- */
 const SQUARES = 15;                       // a crossword entry, and the cap
-const gridEl = document.getElementById("grid");
-let revealed = null;                      // an answer being shown in the grid
 
 /** Walk the pattern text into what the grid draws: squares and word breaks,
  *  each remembering where it came from so a click can put the caret there. */
@@ -705,10 +764,14 @@ function textIndexOfSquare(cells, square){
   return null;
 }
 
-function renderGrid(){
-  const cells = layout(patternEl.value);
-  const caretSquare = squareCount(layout(patternEl.value.slice(0, patternEl.selectionStart ?? 0)));
-  const focused = document.activeElement === patternEl;
+/** One grid, bound to one input. Returns the handle the modes drive it by. */
+function makeGrid(inputEl, gridEl){
+  let revealed = null;                    // an answer being shown in the grid
+
+  function render(){
+  const cells = layout(inputEl.value);
+  const caretSquare = squareCount(layout(inputEl.value.slice(0, inputEl.selectionStart ?? 0)));
+  const focused = document.activeElement === inputEl;
   // A revealed answer is drawn over the squares without touching the pattern,
   // so the list stays put and the next keystroke brings the blanks back.
   const letters = revealed ? [...revealed.parts.join("")] : null;
@@ -737,6 +800,111 @@ function renderGrid(){
     box.dataset.square = i;
     gridEl.appendChild(box);
   }
+  }
+
+  // Only the pattern alphabet reaches the value, so the grid never has to draw
+  // a character it has no square for.
+  inputEl.addEventListener("input", () => {
+    const caret = inputEl.selectionStart ?? inputEl.value.length;
+    const before = inputEl.value;
+    let clean = before.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
+                      .replace(/[^a-z ,\-_?]/g, "");
+    // Fifteen squares is the whole row. Word breaks are free — they sit between
+    // squares rather than taking one.
+    const cells = layout(clean);
+    if (squareCount(cells) > SQUARES) {
+      const cut = textIndexOfSquare(cells, SQUARES);
+      clean = clean.slice(0, cut === null ? clean.length : cut);
+    }
+    if (clean !== before) {
+      inputEl.value = clean;
+      const shift = before.length - clean.length;
+      const at = Math.max(0, Math.min(clean.length, caret - shift));
+      inputEl.setSelectionRange(at, at);
+    }
+    revealed = null;
+    render();
+    queue();
+  });
+
+  // Typing fills the square you are on and moves to the next, rather than
+  // pushing a new square in front of it — the caret is a highlighted square, so
+  // a keystroke has to land *in* it. Past the last square there is nothing to
+  // overwrite and typing appends, which is how the row grows in the first place.
+  //
+  // Word breaks are the exception: a comma sits between two squares rather than
+  // in one, so it still inserts. beforeinput, because it is the only hook that
+  // sees the character before the field has changed.
+  inputEl.addEventListener("beforeinput", event => {
+    if (event.inputType !== "insertText" || event.data === null) return;
+    if (event.data.length !== 1) return;                          // a paste inserts
+    if (inputEl.selectionStart !== inputEl.selectionEnd) return;  // a selection replaces itself
+
+    const ch = event.data.toLowerCase();
+    if (ch === "," || ch === "-") return;
+    if (!/[a-z]/.test(ch) && !BLANK_CHARS.includes(ch)) return;   // junk: the input handler strips it
+
+    const value = inputEl.value;
+    const here = squareCount(layout(value.slice(0, inputEl.selectionStart)));
+    const at = textIndexOfSquare(layout(value), here);
+    if (at === null) return;                                      // past the row: let it append
+
+    event.preventDefault();
+    inputEl.value = value.slice(0, at) + ch + value.slice(at + 1);
+    const next = textIndexOfSquare(layout(inputEl.value), here + 1);
+    const pos = next === null ? inputEl.value.length : next;
+    inputEl.setSelectionRange(pos, pos);
+    inputEl.dispatchEvent(new Event("input", {bubbles: true}));
+  });
+
+  // Backspace works on the square you are on, not the gap behind it. The caret
+  // is drawn as a highlighted square, so that square is what a delete has to
+  // mean — a text input's own backspace takes the character before the caret,
+  // which is the square to the left of the one you are looking at.
+  inputEl.addEventListener("keydown", event => {
+    if (event.key !== "Backspace") return;
+    if (inputEl.selectionStart !== inputEl.selectionEnd) return;  // a real selection deletes itself
+    event.preventDefault();
+
+    const value = inputEl.value;
+    const cells = layout(value);
+    const here = squareCount(layout(value.slice(0, inputEl.selectionStart)));
+    // Past the last square there is nothing under the caret, so take the one
+    // behind it — which is what typing then deleting should feel like.
+    const at = textIndexOfSquare(cells, here) ?? textIndexOfSquare(cells, here - 1);
+    if (at === null) return;
+
+    inputEl.value = value.slice(0, at) + value.slice(at + 1);
+    const target = Math.max(0, here - 1);     // and the first square stays the first
+    const landing = textIndexOfSquare(layout(inputEl.value), target);
+    const pos = landing === null ? inputEl.value.length : landing;
+    inputEl.setSelectionRange(pos, pos);
+    inputEl.dispatchEvent(new Event("input", {bubbles: true}));
+  });
+
+  // The caret is drawn, so anything that moves it has to redraw it.
+  for (const event of ["keyup", "click", "focus", "blur", "select"])
+    inputEl.addEventListener(event, render);
+
+  // The grid is the control: a tap on a square puts the caret in that square.
+  gridEl.addEventListener("mousedown", event => {
+    const box = event.target.closest(".sq");
+    event.preventDefault();
+    inputEl.focus();
+    if (!box) return;
+    const cells = layout(inputEl.value);
+    const at = textIndexOfSquare(cells, +box.dataset.square);
+    const pos = at === null ? inputEl.value.length : at;
+    inputEl.setSelectionRange(pos, pos);
+    render();
+  });
+
+  return {
+    input: inputEl,
+    render,
+    reveal(answer){ revealed = answer; render(); },
+    clear(){ revealed = null; },
+  };
 }
 
 /** Fill the blanks with a chosen answer. Tiles are matched by position, not by
@@ -795,20 +963,29 @@ const REMOTE = !PAYLOAD;   // Django serves the page with no payload embedded
 // merely invisible would keep paying for a thing nobody sees.
 const DIAGNOSTICS = false;
 
-// Two ways into a crossword. Anagram mode rearranges fodder you already have;
-// word finder fills a half-known grid entry. They share the tray, the bands and
+// Three ways into a crossword. Anagram mode rearranges fodder you already
+// have; word finder fills a half-known grid entry; synonyms starts from the
+// definition half of the clue when you have neither. They share the bands and
 // the render path — only the search and the shape of the input differ.
 const tabs = {anagram: document.getElementById("tab-anagram"),
-              finder:  document.getElementById("tab-finder")};
+              finder:  document.getElementById("tab-finder"),
+              synonym: document.getElementById("tab-synonym")};
 const patternEl = document.getElementById("pattern");
-// Two inputs, not one input wearing two labels. Fodder and a pattern are
-// different notations — a space is punctuation in one and a square in the
-// other — so they get their own fields, and neither can bleed into the other.
+const synonymEl = document.getElementById("synonym");
+const synPatternEl = document.getElementById("synpattern");
+// One input per notation, not one input wearing three labels. Fodder, a
+// pattern and a definition word are different things — a space is punctuation
+// in one and a square in another — so each gets its own field and none of them
+// can bleed into the next.
 const FIELDS = {
-  anagram: {input: fodderEl,  box: document.getElementById("fodder-field"),
-            empty: "Letters appear here as you type"},
-  finder:  {input: patternEl, box: document.getElementById("pattern-field"),
-            empty: "Squares appear here as you type"},
+  anagram: {input: fodderEl,  box: document.getElementById("fodder-field")},
+  finder:  {input: patternEl, box: document.getElementById("pattern-field")},
+  synonym: {input: synonymEl, box: document.getElementById("synonym-field")},
+};
+// Each grid owns its own input and its own revealed answer.
+const GRIDS = {
+  finder:  makeGrid(patternEl, document.getElementById("grid")),
+  synonym: makeGrid(synPatternEl, document.getElementById("syngrid")),
 };
 let mode = "anagram";
 
@@ -816,6 +993,9 @@ let mode = "anagram";
 // capped — and says so when it bites, rather than passing a truncated list off
 // as the whole answer.
 const FINDER_LIMIT = 200;
+// A synset is small — 4 synonyms is the median, 60 the widest — so this only
+// ever bites when no pattern has been typed.
+const SYNONYM_LIMIT = 200;
 
 function setMode(next){
   if (next === mode) return;
@@ -824,12 +1004,13 @@ function setMode(next){
     tab.setAttribute("aria-selected", String(name === mode));
   for (const [name, field] of Object.entries(FIELDS))
     field.box.hidden = name !== mode;
-  // One row of squares, not two: in word finder the grid you type into is the
-  // tray, so the tray below would only ever be a copy of it.
-  trayEl.hidden = mode === "finder";
-  revealed = null;
-  // The pattern states its own shape, so there is nothing to enter here.
-  enumField().hidden = mode === "finder";
+  // One row of squares, not two: where you type into a grid, that grid is the
+  // tray, so the tray below would only ever be a copy of it. Anagram mode is
+  // the only one with loose letters to hold.
+  trayEl.hidden = mode !== "anagram";
+  for (const grid of Object.values(GRIDS)) grid.clear();
+  // A pattern states its own shape, so there is nothing to enter here.
+  enumField().hidden = mode !== "anagram";
   enumField().classList.remove("err");
   hintEl.classList.remove("err");
   showUnattested = false;
@@ -872,9 +1053,54 @@ async function getMatches(pat, raw){
   return (await res.json()).answers;
 }
 
+/** The same fork again, for synonyms. */
+async function getSynonyms(word, pat, raw){
+  if (!REMOTE) return findSynonyms(word, pat, SYNONYM_LIMIT);
+  const q = new URLSearchParams({word, pattern: raw, limit: String(SYNONYM_LIMIT)});
+  const res = await fetch("/api/synonyms?" + q);
+  if (!res.ok) throw new Error(`solver returned ${res.status}`);
+  return (await res.json()).answers;
+}
+
 async function refresh(){
   if (!ready) return;
-  return mode === "finder" ? refreshFinder() : refreshAnagram();
+  if (mode === "finder") return refreshFinder();
+  if (mode === "synonym") return refreshSynonyms();
+  return refreshAnagram();
+}
+
+/** Synonyms: the definition word is the query and the pattern only narrows it,
+ *  so unlike the word finder an empty grid is a perfectly good question. */
+async function refreshSynonyms(){
+  const word = synonymEl.value;
+  const raw = synPatternEl.value;
+  const pat = parsePattern(raw);
+
+  countEl.classList.remove("over");
+  countEl.textContent = pat.total ? String(pat.total) : "\u2014";
+  GRIDS.synonym.render();
+  resultsEl.textContent = "";
+  hintEl.classList.remove("err");
+
+  if (!norm(word)) {
+    hintEl.textContent = "Type the definition half of the clue";
+    return;
+  }
+  hintEl.textContent = "";
+
+  const mine = ++seq;
+  const t0 = performance.now();
+  let answers;
+  try {
+    answers = await getSynonyms(word, pat.words.length ? pat : null, raw);
+  } catch (err) {
+    if (mine === seq) hintEl.textContent = `Could not reach the solver: ${err.message}`;
+    return;
+  }
+  if (mine !== seq) return;
+  render(answers, pat.enu, performance.now() - t0);
+  if (answers.length >= SYNONYM_LIMIT)
+    hintEl.textContent = `Showing the first ${SYNONYM_LIMIT}.`;
 }
 
 /** Word finder: the pattern is the whole query — letters, gaps and, through
@@ -886,7 +1112,7 @@ async function refreshFinder(){
 
   countEl.classList.remove("over");
   countEl.textContent = pat.total ? String(pat.total) : "\u2014";
-  renderGrid();
+  GRIDS.finder.render();
   resultsEl.textContent = "";
   hintEl.classList.remove("err");
 
@@ -965,15 +1191,19 @@ function render(answers, enu, ms){
     p.className = "status empty-state";
     p.textContent = mode === "finder"
       ? "No attested entry fits that pattern."
-      : showUnattested
-        ? "No arrangement of these letters makes words of that shape."
-        : "No attested answer fits these letters.";
+      : mode === "synonym"
+        ? (parsePattern(synPatternEl.value).words.length
+             ? "No synonym of that word fits those squares."
+             : "No synonyms for that word. The thesaurus covers 20,152 of them.")
+        : showUnattested
+          ? "No arrangement of these letters makes words of that shape."
+          : "No attested answer fits these letters.";
     resultsEl.appendChild(p);
     if (DIAGNOSTICS) {
       if (!REMOTE) renderSuggestions(diagnose(fodderEl.value, enu));
       else fetchSuggestions(enu);
     }
-    if (mode !== "finder" && !showUnattested && enu.lengths.length > 1)
+    if (mode === "anagram" && !showUnattested && enu.lengths.length > 1)
       resultsEl.appendChild(moreButton());
     return;
   }
@@ -1003,8 +1233,8 @@ function render(answers, enu, ms){
     btn.addEventListener("click", () => {
       for (const el of resultsEl.querySelectorAll(".answer")) el.setAttribute("aria-current", "false");
       btn.setAttribute("aria-current", "true");
-      if (mode === "finder") { revealed = a; renderGrid(); }
-      else arrangeInto(a.parts, enu.seps);
+      if (mode === "anagram") arrangeInto(a.parts, enu.seps);
+      else GRIDS[mode].reveal(a);
     });
     group.appendChild(btn);
   }
@@ -1012,7 +1242,7 @@ function render(answers, enu, ms){
   status.className = "status";
   status.textContent = `${answers.length} shown in ${ms < 1 ? "<1" : Math.round(ms)} ms`;
   resultsEl.appendChild(status);
-  if (mode !== "finder" && !showUnattested && enu.lengths.length > 1)
+  if (mode === "anagram" && !showUnattested && enu.lengths.length > 1)
     resultsEl.appendChild(moreButton());
 }
 
@@ -1077,103 +1307,8 @@ function queue(){
   timer = setTimeout(refresh, 90);
 }
 fodderEl.addEventListener("input", () => { trackFodder(); queue(); });
+synonymEl.addEventListener("input", () => { GRIDS.synonym.clear(); queue(); });
 
-// Only the pattern alphabet reaches the value, so the grid never has to draw a
-// character it has no square for.
-patternEl.addEventListener("input", () => {
-  const caret = patternEl.selectionStart ?? patternEl.value.length;
-  const before = patternEl.value;
-  let clean = before.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
-                    .replace(/[^a-z ,\-_?]/g, "");
-  // Fifteen squares is the whole row. Word breaks are free — they sit between
-  // squares rather than taking one.
-  const cells = layout(clean);
-  if (squareCount(cells) > SQUARES) {
-    const cut = textIndexOfSquare(cells, SQUARES);
-    clean = clean.slice(0, cut === null ? clean.length : cut);
-  }
-  if (clean !== before) {
-    patternEl.value = clean;
-    const shift = before.length - clean.length;
-    const at = Math.max(0, Math.min(clean.length, caret - shift));
-    patternEl.setSelectionRange(at, at);
-  }
-  revealed = null;
-  renderGrid();
-  queue();
-});
-
-// Typing fills the square you are on and moves to the next, rather than
-// pushing a new square in front of it — the caret is a highlighted square, so
-// a keystroke has to land *in* it. Past the last square there is nothing to
-// overwrite and typing appends, which is how the row grows in the first place.
-//
-// Word breaks are the exception: a comma sits between two squares rather than
-// in one, so it still inserts. beforeinput, because it is the only hook that
-// sees the character before the field has changed.
-patternEl.addEventListener("beforeinput", event => {
-  if (event.inputType !== "insertText" || event.data === null) return;
-  if (event.data.length !== 1) return;                              // a paste inserts
-  if (patternEl.selectionStart !== patternEl.selectionEnd) return;  // a selection replaces itself
-
-  const ch = event.data.toLowerCase();
-  if (ch === "," || ch === "-") return;
-  if (!/[a-z]/.test(ch) && !BLANK_CHARS.includes(ch)) return;       // junk: the input handler strips it
-
-  const value = patternEl.value;
-  const here = squareCount(layout(value.slice(0, patternEl.selectionStart)));
-  const at = textIndexOfSquare(layout(value), here);
-  if (at === null) return;                                          // past the row: let it append
-
-  event.preventDefault();
-  patternEl.value = value.slice(0, at) + ch + value.slice(at + 1);
-  const next = textIndexOfSquare(layout(patternEl.value), here + 1);
-  const pos = next === null ? patternEl.value.length : next;
-  patternEl.setSelectionRange(pos, pos);
-  patternEl.dispatchEvent(new Event("input", {bubbles: true}));
-});
-
-// Backspace works on the square you are on, not the gap behind it. The caret
-// is drawn as a highlighted square, so that square is what a delete has to
-// mean — a text input's own backspace takes the character before the caret,
-// which is the square to the left of the one you are looking at.
-patternEl.addEventListener("keydown", event => {
-  if (event.key !== "Backspace") return;
-  if (patternEl.selectionStart !== patternEl.selectionEnd) return;  // a real selection deletes itself
-  event.preventDefault();
-
-  const value = patternEl.value;
-  const cells = layout(value);
-  const here = squareCount(layout(value.slice(0, patternEl.selectionStart)));
-  // Past the last square there is nothing under the caret, so take the one
-  // behind it — which is what typing then deleting should feel like.
-  const at = textIndexOfSquare(cells, here) ?? textIndexOfSquare(cells, here - 1);
-  if (at === null) return;
-
-  patternEl.value = value.slice(0, at) + value.slice(at + 1);
-  const target = Math.max(0, here - 1);       // and the first square stays the first
-  const landing = textIndexOfSquare(layout(patternEl.value), target);
-  const pos = landing === null ? patternEl.value.length : landing;
-  patternEl.setSelectionRange(pos, pos);
-  patternEl.dispatchEvent(new Event("input", {bubbles: true}));
-});
-
-// The caret is drawn, so anything that moves it has to redraw it.
-for (const event of ["keyup", "click", "focus", "blur", "select"])
-  patternEl.addEventListener(event, renderGrid);
-
-// The grid is the control: a tap on a square puts the caret in that square.
-gridEl.addEventListener("mousedown", event => {
-  const box = event.target.closest(".sq");
-  event.preventDefault();
-  patternEl.focus();
-  if (!box) return;
-  const cells = layout(patternEl.value);
-  const at = textIndexOfSquare(cells, +box.dataset.square);
-  const pos = at === null ? patternEl.value.length : at;
-  patternEl.setSelectionRange(pos, pos);
-  renderGrid();
-});
 for (const [name, tab] of Object.entries(tabs))
   tab.addEventListener("click", () => setMode(name));
 enumEl.addEventListener("input", () => {

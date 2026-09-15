@@ -44,14 +44,21 @@ for length in sorted(by_length):
 
 phrase_groups = [f"{total}\n" + "\n".join(by_total[total]) for total in sorted(by_total)]
 
-# Only same-length synonyms common enough to be swap candidates are usable by
-# the diagnostics: 0.05 MB gzipped instead of 0.33 MB for all of them.
+# The whole synonym set per word, not just the same-length slice the
+# diagnostics need: 0.32 MB gzipped against 0.05 MB, and it buys the synonyms
+# mode, which is the one thing here a solver would otherwise reach for a
+# thesaurus to do. word_swaps still filters to same-length candidates itself,
+# so a superset costs it nothing.
+#
+# Targets are restricted to words the dictionary attests. A lemma we would
+# never score or rank is one we cannot band honestly, and WordNet supplies a
+# good few of them.
+attested = set(words)
 syn_lines = []
 for word in words:
     if idx.zipf(word) < SWAP_MIN_ZIPF:
         continue
-    related = sorted(s for s in idx.synonyms(word)
-                     if len(s) == len(word) and idx.zipf(s) >= SWAP_MIN_ZIPF)
+    related = sorted(s for s in idx.synonyms(word) if s in attested)
     if related:
         syn_lines.append(word + " " + " ".join(related))
 

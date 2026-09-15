@@ -330,6 +330,11 @@ class Index:
     def zipf(self, word: str) -> float:
         return self.freq.get(word, 0.0)
 
+    def attests(self, word: str) -> bool:
+        """Is this word in the dictionary at all? Membership, not frequency —
+        half of UKACD has no Zipf signal and is attested regardless."""
+        return word in self.words_by_key.get(len(word), {}).get(anagram_key(word), ())
+
     def band(self, words: Sequence[str], tier: str) -> int:
         if tier == TIER_COMBO:
             return BAND_UNATTESTED
@@ -531,6 +536,74 @@ def find_pattern(
         matched.sort(key=lambda m: ("".join(m[1]), m[0]))
         for words, separators in matched:
             add(words, TIER_PHRASE, separators)
+
+    answers.sort(key=lambda a: (a.band, -a.score, a.text))
+    return answers[:limit]
+
+
+# --------------------------------------------------------------------------
+# Synonyms
+#
+# The third way into a crossword. You have not got the fodder and you have not
+# got enough squares to look the entry up — what you have is the definition
+# half of the clue and a shape. "Quiet, 4 letters, second letter U."
+# --------------------------------------------------------------------------
+
+
+def find_synonyms(
+    word: str,
+    pattern: str | Pattern | None,
+    index: Index,
+    limit: int = 50,
+) -> list[Answer]:
+    """Synonyms of `word` that fit `pattern`.
+
+    The pattern does the same work it does in find_pattern() — it carries its
+    own enumeration in its separators, so there is no shape to type twice and
+    nothing to disagree with. Pass None (or an empty pattern) to see the whole
+    synonym set unfiltered.
+
+    Bands and ordering are the answer rule again: ranked before unranked,
+    never traded off against score. There is no unattested tier, because a
+    synonym is either in the thesaurus or it is not — an unattested one would
+    be a word we invented, which is not evidence about anything.
+    """
+    target = normalise(word)
+    if not target:
+        return []
+
+    pat = pattern if isinstance(pattern, Pattern) else (
+        parse_pattern(pattern) if pattern else None)
+    if pat is not None and not pat.words:
+        pat = None
+
+    answers: list[Answer] = []
+    seen: set[tuple[str, ...]] = set()
+
+    for candidate in index.synonyms(target):
+        parts, separators = split_entry(candidate)
+        if not parts or parts in seen:
+            continue
+        # WordNet supplies lemmas our own dictionary has never heard of. One we
+        # cannot look up is one we cannot band honestly, and the browser build
+        # drops them from the payload for the same reason — so both agree.
+        if not all(index.attests(p) for p in parts):
+            continue
+        if pat is not None and not pat.matches(parts):
+            continue
+        seen.add(parts)
+        tier = TIER_PHRASE if len(parts) > 1 else TIER_WORD
+        text = parts[0] + "".join(
+            s + p for s, p in zip(separators, parts[1:]))
+        answers.append(
+            Answer(
+                text=text,
+                words=parts,
+                tier=tier,
+                band=index.band(parts, tier),
+                score=index.score(parts),
+            )
+        )
 
     answers.sort(key=lambda a: (a.band, -a.score, a.text))
     return answers[:limit]
