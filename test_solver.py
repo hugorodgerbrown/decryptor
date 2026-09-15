@@ -212,6 +212,72 @@ def test_pattern_limit_is_respected(index):
     assert len(find_pattern("________", index, limit=5)) == 5
 
 
+# -- synonyms ---------------------------------------------------------------
+from solver import find_synonyms  # noqa: E402
+
+
+def test_synonyms_of_a_clue_word(index):
+    """The plain lookup: the definition half of the clue, nothing else known."""
+    texts = [a.text for a in find_synonyms("want", None, index)]
+    assert "need" in texts
+    assert "wish" in texts
+
+
+def test_pattern_narrows_the_synset(index):
+    """The whole point of the mode: 'quiet' has a dozen synonyms and exactly one
+    of them fits h__h."""
+    assert [a.text for a in find_synonyms("quiet", "h__h", index)] == ["hush"]
+
+
+def test_pattern_carries_its_own_enumeration(index):
+    """Same rule as the word finder: the shape is in the separators, so a
+    multi-word pattern rejects a single-word synonym of the right length."""
+    assert find_synonyms("quiet", "h_,_h", index) == []
+
+
+def test_synonyms_respect_the_pattern_positionally(index):
+    """A synonym with the right letters in the wrong squares must not come
+    back, exactly as in find_pattern()."""
+    assert "hush" not in [a.text for a in find_synonyms("quiet", "_h_h", index)]
+
+
+def test_synonym_bands_match_the_solver(index):
+    answers = find_synonyms("quiet", None, index)
+    assert answers == sorted(answers, key=lambda a: (a.band, -a.score, a.text))
+    assert answers[0].band == BAND_RANKED
+
+
+def test_synonyms_are_all_attested(index):
+    """WordNet offers lemmas our own dictionary has never heard of. We cannot
+    band those honestly, and the browser payload drops them, so neither may we."""
+    for word in ("quiet", "want", "sailor", "flower", "run"):
+        for answer in find_synonyms(word, None, index):
+            assert all(index.attests(w) for w in answer.words), answer.text
+
+
+def test_a_word_is_not_its_own_synonym(index):
+    assert "quiet" not in [a.text for a in find_synonyms("quiet", None, index)]
+
+
+def test_synonyms_ignore_case_and_punctuation(index):
+    assert find_synonyms("Quiet!", None, index) == find_synonyms("quiet", None, index)
+
+
+def test_no_word_finds_nothing(index):
+    assert find_synonyms("", None, index) == []
+    assert find_synonyms("   ", "h__h", index) == []
+
+
+def test_unknown_word_finds_nothing_rather_than_raising(index):
+    """Below the frequency floor there is simply no synset. An empty list is
+    the honest answer; the UI says so in words."""
+    assert find_synonyms("zzzzqx", None, index) == []
+
+
+def test_synonym_limit_is_respected(index):
+    assert len(find_synonyms("run", None, index, limit=3)) == 3
+
+
 # -- diagnostics ------------------------------------------------------------
 from solver import alternative_shapes, diagnose, letter_near_misses, word_swaps  # noqa: E402
 

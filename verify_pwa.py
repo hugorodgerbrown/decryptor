@@ -36,8 +36,23 @@ HERE = Path(__file__).parent
 PORT = 8143
 ORIGIN = f"http://127.0.0.1:{PORT}"
 
-# The answer to the seeded query. If the app runs at all, it produces this.
+# The query, and its answer. If the app runs at all, typing the first produces
+# the second.
+FODDER = "on a train, up to its"
+ENUM = "10,5"
 EXPECTED = "saturation point"
+
+
+def ask(page, timeout: int = 30000) -> None:
+    """Type the query in and wait for its answer.
+
+    The fields start empty, so nothing is on screen until something is typed.
+    That makes typing part of the check rather than a preamble to it: an app
+    that loaded but cannot solve now fails here instead of passing on a result
+    the page was seeded with."""
+    page.fill("#fodder", FODDER)
+    page.fill("#enum", ENUM)
+    page.wait_for_selector(".answer .txt", timeout=timeout)
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -102,7 +117,7 @@ def main() -> int:
 
         # --- install ---
         page.goto(ORIGIN + "/", wait_until="load")
-        page.wait_for_selector(".answer .txt", timeout=30000)
+        ask(page)
         page.evaluate("navigator.serviceWorker.ready")
         first = page.text_content(".mark")
         cache_before = page.evaluate("async () => (await caches.keys())[0]")
@@ -121,7 +136,7 @@ def main() -> int:
                                 ".catch(() => 'unreachable')")
         page.reload(wait_until="load")
         try:
-            page.wait_for_selector(".answer .txt", timeout=25000)
+            ask(page, 25000)
             offline = page.text_content(".answer .txt") == EXPECTED
         except Exception as err:
             offline = False
@@ -140,7 +155,7 @@ def main() -> int:
         probe = context.new_page()
         try:
             probe.goto(ORIGIN + "/deep/link", wait_until="load", timeout=20000)
-            probe.wait_for_selector(".answer .txt", timeout=25000)
+            ask(probe, 25000)
             fallback = probe.text_content(".answer .txt") == EXPECTED
         except Exception as err:
             fallback = False
@@ -161,7 +176,7 @@ def main() -> int:
             except Exception:
                 pass       # the worker reloads the page under us; that is the point
             time.sleep(0.4)
-        page.wait_for_selector(".answer .txt", timeout=30000)
+        ask(page)
         updated = page.text_content(".mark")
         cache_after = page.evaluate("caches.keys()")
         browser.close()

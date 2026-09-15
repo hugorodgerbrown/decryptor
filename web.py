@@ -39,7 +39,7 @@ django.setup()
 # construction, so no locking is needed.
 import vocab  # noqa: E402
 from solver import (  # noqa: E402
-    diagnose, find_pattern, parse_pattern, solve, split_entry)
+    diagnose, find_pattern, find_synonyms, parse_pattern, solve, split_entry)
 
 INDEX = vocab.load()
 PAGE = (HERE / "ui.template.html").read_text().replace("__PAYLOAD__", "")
@@ -92,6 +92,31 @@ def api_find(request):
     }, json_dumps_params={"ensure_ascii": False})
 
 
+def api_synonyms(request):
+    """Synonyms of a clue's definition word, narrowed by what the grid knows.
+
+    The pattern is optional and, as in /api/find, carries its own enumeration —
+    so there is no shape parameter here either.
+    """
+    try:
+        limit = min(int(request.GET.get("limit", 50)), 200)
+    except ValueError:
+        return JsonResponse({"error": "limit must be a number"}, status=400)
+    pattern = parse_pattern(request.GET.get("pattern", ""))
+    answers = find_synonyms(request.GET.get("word", ""),
+                            pattern if pattern.words else None,
+                            INDEX, limit=limit)
+    return JsonResponse({
+        "answers": [
+            {"text": a.text, "parts": list(a.words),
+             "seps": list(split_entry(a.text)[1]),
+             "band": a.band, "band_label": a.band_label,
+             "tier": a.tier, "score": a.score}
+            for a in answers
+        ]
+    }, json_dumps_params={"ensure_ascii": False})
+
+
 def api_diagnose(request):
     """What would have worked. Only meaningful when /api/solve came back empty."""
     try:
@@ -113,6 +138,7 @@ def api_diagnose(request):
 
 urlpatterns = [path("", home), path("api/solve", api_solve),
                path("api/find", api_find),
+               path("api/synonyms", api_synonyms),
                path("api/diagnose", api_diagnose)]
 
 # gunicorn web:application

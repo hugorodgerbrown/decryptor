@@ -87,12 +87,18 @@ def _sources() -> tuple[set[str], set[str], dict[str, float]]:
     return words, phrases, freq
 
 
-# Only words this common can be swap candidates, so only these need synonyms.
+# The floor on the *word you look up*, not on what comes back. A clue's
+# definition word is ordinary English, and a swap candidate has to be common to
+# be worth suggesting; below this the synset is noise nobody would ever query.
 SYNONYM_MIN_ZIPF = 3.0
 
 
 def _synonym_map(freq: dict[str, float]) -> dict[str, frozenset[str]]:
     """word -> single-word lemmas sharing a synset with it.
+
+    Read by two callers with different appetites: word_swaps() wants only
+    same-length candidates, find_synonyms() wants the lot. Both filter at query
+    time, so this stores the full set once.
 
     Precomputed into the cache rather than queried live: WordNet's corpus takes
     8.6s to load lazily, which is the entire cost of the diagnostics. Built
